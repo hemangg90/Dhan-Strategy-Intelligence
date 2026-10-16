@@ -167,7 +167,7 @@ if st.button("Submit to Risk Engine -> DhanBroker (LIVE)", type="primary", disab
         target_price=premium_setup.target_price,
         quantity=quantity,
         relative_volume=output.market_state.get("relative_volume"),
-        data_quality_status=output.data_quality_status,
+        data_quality_status=output.data_quality_status, quote_time=getattr(output, "timestamp", None), long_premium=True,
         instrument=underlying,
     )
     decision = evaluate_trade(account, proposed)

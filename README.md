@@ -6,8 +6,11 @@ the Dhan broker API.
 
 It answers one question, over and over, for every instrument it watches:
 
-> **Which validated strategy has the strongest statistically validated edge under today's market
-> conditions - and is there a valid setup right now? If not, do nothing.**
+> **Which strategy ranks highest on historical, cost-adjusted conditional expectancy under today's
+> market conditions - and is there a valid setup right now? If not, do nothing.**
+>
+> These are historical results, not predictions. The walk-forward evaluation has not shown the selector
+> beating a random pick (see Known limitations).
 
 Everything is paper-traded by default. Real orders require a deliberate, double-gated opt-in (see
 [Safety model](#safety-model)). **This is research software, not financial advice - nothing here is a
@@ -441,8 +444,8 @@ Requires **Python 3.11+** (developed on 3.12) and a Dhan account with API access
 access token). Check Dhan's current terms for what its market-data APIs require on your account.
 
 ```bash
-git clone https://github.com/hemanggg90/nifty-intelligence.git
-cd nifty-intelligence
+git clone https://github.com/hemangg90/Dhan-Strategy-Intelligence.git
+cd Dhan-Strategy-Intelligence
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 

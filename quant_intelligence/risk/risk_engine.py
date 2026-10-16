@@ -29,6 +29,7 @@ shrink in a bad stretch instead of staying full until the hard drawdown veto sto
 from __future__ import annotations
 
 import datetime as dt
+import numbers
 from dataclasses import dataclass, field
 
 from quant_intelligence.config.risk_groups import group_for
@@ -65,6 +66,21 @@ class ProposedTrade:
     relative_volume: float | None = None
     data_quality_status: str = "OK"
     instrument: str = ""
+    # Optional market snapshot at order time. None means "not supplied" and skips that check, except that a
+    # supplied quote with no usable bid/ask is never assumed to be fine.
+    quote_time: dt.datetime | None = None  # when the price used for entry was observed
+    bid: float | None = None
+    ask: float | None = None
+    lot_size: int | None = None  # quantity must be a whole multiple of this when supplied
+    # True when the prices are an option PREMIUM that is being bought (a SHORT underlying view buys a put),
+    # so stop/target geometry is validated as long even though `direction` describes the underlying.
+    long_premium: bool = False
+
+
+# Deterministic order-time limits, independent of the ranker's own data-quality verdict.
+MAX_QUOTE_AGE_SEC = 15 * 60  # a 5-minute bar plus generous latency
+MAX_SPREAD_PCT = 2.0  # (ask - bid) / mid, in percent
+MAX_SLIPPAGE_STOP_FRACTION = 0.5  # half-spread (expected slippage) vs distance from entry to stop
 
 
 @dataclass
@@ -133,8 +149,26 @@ def evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime
     if not account.broker_connected:
         return _veto(decision_id, "Broker is disconnected - cannot execute", checks)
 
+    invalid = _invalid_order_reason(trade)
+    checks["order_parameters_valid"] = invalid is None
+    if invalid:
+        return _veto(decision_id, f"Invalid order: {invalid}", checks)
+
     if trade.data_quality_status != "OK":
         return _veto(decision_id, f"Data quality is {trade.data_quality_status} - trade blocked", checks)
+
+    if trade.quote_time is not None:
+        age = _age_seconds(trade.quote_time, now)
+        checks["quote_fresh"] = age is not None and 0 <= age <= MAX_QUOTE_AGE_SEC
+        if not checks["quote_fresh"]:
+            shown = "unknown" if age is None else f"{age / 60:.1f} min"
+            return _veto(decision_id, f"Price is stale (age {shown}, max {MAX_QUOTE_AGE_SEC // 60} min)", checks)
+
+    if trade.bid is not None or trade.ask is not None:
+        spread_problem = _spread_slippage_reason(trade)
+        checks["spread_and_slippage_acceptable"] = spread_problem is None
+        if spread_problem:
+            return _veto(decision_id, spread_problem, checks)
 
     daily_loss_pct = -account.daily_pnl / account.equity * 100 if account.equity > 0 else 0
     checks["daily_loss_within_limit"] = daily_loss_pct < limits.max_daily_loss_pct
@@ -251,6 +285,64 @@ def evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime
     log_event("risk_engine", "Trade approved by risk engine", level="INFO", decision_id=decision_id, strategy=trade.strategy_name)
     _persist_risk_event(decision_id, "APPROVED", "All risk checks passed", checks)
     return RiskDecision(decision_id, True, "All risk checks passed", checks)
+
+
+def _finite_positive(x) -> bool:
+    return isinstance(x, numbers.Real) and float(x) == float(x) and 0 < float(x) < float("inf")
+
+
+def _invalid_order_reason(trade: ProposedTrade) -> str | None:
+    """Structural validity of the order: prices, stop side, target side, quantity, lot size. None if valid."""
+    if trade.direction not in ("LONG", "SHORT"):
+        return f"direction '{trade.direction}' is not LONG or SHORT"
+    for name, price in (("entry", trade.entry_price), ("stop", trade.stop_price), ("target", trade.target_price)):
+        if not _finite_positive(price):
+            return f"{name} price {price!r} is not a positive number"
+    if trade.entry_price == trade.stop_price:
+        return "stop equals entry (zero stop distance)"
+    long = trade.direction == "LONG" or trade.long_premium
+    if long and trade.stop_price >= trade.entry_price:
+        return f"LONG stop {trade.stop_price:g} is not below entry {trade.entry_price:g}"
+    if not long and trade.stop_price <= trade.entry_price:
+        return f"SHORT stop {trade.stop_price:g} is not above entry {trade.entry_price:g}"
+    if long and trade.target_price <= trade.entry_price:
+        return f"LONG target {trade.target_price:g} is not above entry {trade.entry_price:g}"
+    if not long and trade.target_price >= trade.entry_price:
+        return f"SHORT target {trade.target_price:g} is not below entry {trade.entry_price:g}"
+    if not isinstance(trade.quantity, numbers.Integral) or isinstance(trade.quantity, bool) or trade.quantity <= 0:
+        return f"quantity {trade.quantity!r} is not a positive whole number"
+    if trade.lot_size and trade.quantity % trade.lot_size != 0:
+        return f"quantity {trade.quantity} is not a multiple of lot size {trade.lot_size}"
+    return None
+
+
+def _age_seconds(observed: dt.datetime, now: dt.datetime) -> float | None:
+    try:
+        if (observed.tzinfo is None) != (now.tzinfo is None):
+            observed, now = observed.replace(tzinfo=None), now.replace(tzinfo=None)
+        return (now - observed).total_seconds()
+    except Exception:
+        return None
+
+
+def _spread_slippage_reason(trade: ProposedTrade) -> str | None:
+    """Veto reason if the quote is unusable, the spread is too wide, or expected slippage eats the stop."""
+    if not (_finite_positive(trade.bid) and _finite_positive(trade.ask)):
+        return "Spread unknown: bid/ask missing or non-positive - cannot verify execution cost"
+    bid, ask = float(trade.bid), float(trade.ask)  # type: ignore[arg-type]
+    if ask < bid:
+        return f"Crossed quote (bid {bid:g} > ask {ask:g}) - cannot trust price"
+    spread = ask - bid
+    spread_pct = spread / ((ask + bid) / 2) * 100
+    if spread_pct > MAX_SPREAD_PCT:
+        return f"Spread {spread_pct:.2f}% exceeds max {MAX_SPREAD_PCT:g}%"
+    stop_distance = abs(trade.entry_price - trade.stop_price)
+    if spread / 2 > MAX_SLIPPAGE_STOP_FRACTION * stop_distance:
+        return (
+            f"Expected slippage {spread / 2:.2f} is over {MAX_SLIPPAGE_STOP_FRACTION:.0%} of the "
+            f"stop distance {stop_distance:.2f}"
+        )
+    return None
 
 
 def _veto(decision_id: str, reason: str, checks: dict) -> RiskDecision:

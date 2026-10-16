@@ -72,7 +72,8 @@ def test_third_same_direction_index_position_is_vetoed_but_other_bets_are_allowe
     acct = _account(open_positions_count=2, open_positions=open_longs)
     d = evaluate_trade(acct, _trade(instrument="NIFTY", direction="LONG"), now=NOW)
     assert not d.approved and "group INDICES" in d.reason
-    assert evaluate_trade(acct, _trade(instrument="NIFTY", direction="SHORT"), now=NOW).approved
+    short = _trade(instrument="NIFTY", direction="SHORT", stop_price=101.0, target_price=97.0)
+    assert evaluate_trade(acct, short, now=NOW).approved
     assert evaluate_trade(acct, _trade(instrument="RELIANCE", direction="LONG"), now=NOW).approved
 
 

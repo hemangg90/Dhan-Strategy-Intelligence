@@ -147,6 +147,9 @@ class DhanLimits:
 class Settings:
     trading_mode: str = os.getenv("TRADING_MODE", "PAPER").strip().upper()
     trading_live_confirm: str = os.getenv("TRADING_LIVE_CONFIRM", "").strip()
+    # Presentation lock: forces paper mode whatever TRADING_MODE / TRADING_LIVE_CONFIRM say, and hides
+    # credentials in the UI. Set DEMO_LOCKDOWN=1 for demos and screen shares.
+    demo_lockdown: bool = _bool_env("DEMO_LOCKDOWN", False)
 
     database_url: str = os.getenv(
         "DATABASE_URL", f"sqlite:///{(DATA_CACHE_DIR / 'quant_intelligence.db').as_posix()}"
@@ -246,7 +249,7 @@ class Settings:
 
     @property
     def is_live_mode(self) -> bool:
-        return self.trading_mode == "LIVE"
+        return self.trading_mode == "LIVE" and not self.demo_lockdown
 
     @property
     def live_mode_fully_authorized(self) -> bool:
@@ -257,7 +260,8 @@ class Settings:
         real order flow.
         """
         return (
-            self.is_live_mode
+            not self.demo_lockdown
+            and self.is_live_mode
             and self.trading_live_confirm == "YES_I_UNDERSTAND_THE_RISK"
         )
 

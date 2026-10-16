@@ -25,7 +25,8 @@ init_session_state()
 
 st.title("Quant Strategy Intelligence & Execution System")
 st.caption("Research-first terminal for Indian index derivatives. Central question: "
-           "which validated strategy has the strongest statistically validated conditional edge right now?")
+           "which strategy ranks highest on historical, cost-adjusted conditional expectancy right now? "
+           "Results are historical and are not predictions; no edge over a random pick has been demonstrated.")
 
 with st.sidebar:
     st.header("Instrument & Data")
@@ -45,7 +46,7 @@ with st.sidebar:
     st.header("Trading Mode")
     if SETTINGS.is_live_mode and SETTINGS.live_mode_fully_authorized:
         st.markdown('<span class="qi-badge qi-badge-live">LIVE MODE ENABLED</span>', unsafe_allow_html=True)
-        st.error("LIVE mode is active. Real orders can be sent once the Dhan adapter is implemented.")
+        st.error("LIVE mode is active. Real orders can be sent from the Live Options page after manual confirmation.")
     elif SETTINGS.is_live_mode:
         st.markdown('<span class="qi-badge qi-badge-notrade">LIVE requested, NOT authorized</span>', unsafe_allow_html=True)
         st.warning("TRADING_MODE=LIVE but TRADING_LIVE_CONFIRM is missing/incorrect. Falling back to PAPER behavior.")

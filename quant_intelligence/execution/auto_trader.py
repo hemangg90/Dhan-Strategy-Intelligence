@@ -289,6 +289,7 @@ def _run_auto_option_cycle(
         quantity=quantity,
         relative_volume=output.market_state.get("relative_volume"),
         data_quality_status=output.data_quality_status,
+        quote_time=getattr(output, "timestamp", None), long_premium=True,
         instrument=underlying,
     )
     decision = evaluate_trade(account, proposed)
@@ -384,6 +385,7 @@ def _run_auto_equity_cycle(output: PipelineOutput, broker: PaperBroker, account:
         quantity=quantity,
         relative_volume=output.market_state.get("relative_volume"),
         data_quality_status=output.data_quality_status,
+        quote_time=getattr(output, "timestamp", None),
         instrument=instrument,
     )
     decision = evaluate_trade(account, proposed)

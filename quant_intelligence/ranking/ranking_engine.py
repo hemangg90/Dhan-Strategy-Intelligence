@@ -214,4 +214,4 @@ def rank_and_select(
                     f"not statistically distinguishable (edge difference {z:.2f} standard errors < {TIE_Z})",
                 )
 
-    return RankingDecision(ranked, top.strategy_name, False, f"{top.strategy_name} has the strongest validated conditional edge")
+    return RankingDecision(ranked, top.strategy_name, False, f"{top.strategy_name} ranks highest on historical conditional expectancy (not a prediction)")

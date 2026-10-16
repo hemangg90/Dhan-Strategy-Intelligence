@@ -67,6 +67,10 @@ def _keeper_line() -> str:
 
 
 def render_credentials_panel() -> None:
+    if SETTINGS.demo_lockdown:
+        # Presentation mode: status only, no client ID, no token, no way to overwrite credentials.
+        st.caption(f"Dhan: {_token_line()} (credentials hidden: demo lockdown)")
+        return
     expired = token_status(SETTINGS.dhan_access_token)["state"] in ("missing", "expired")
     with st.expander("Dhan API credentials", expanded=expired):
         st.caption(f"Client ID: `{SETTINGS.dhan_client_id or '(not set)'}`")

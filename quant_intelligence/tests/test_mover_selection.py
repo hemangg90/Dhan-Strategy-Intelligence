@@ -3,6 +3,8 @@ import datetime as dt
 from pathlib import Path
 from types import SimpleNamespace
 
+from quant_intelligence.utils.timeutil import now_ist
+
 import pandas as pd
 import pytest
 
@@ -88,7 +90,7 @@ def _cycle(monkeypatch, setup_direction, allowed, transaction="BUY"):
     monkeypatch.setattr(auto_trader, "select_contract", lambda *a, **k: contract)
     monkeypatch.setattr(auto_trader, "translate_setup", lambda *a, **k: premium)
     ranking = SimpleNamespace(is_no_trade=False, selected_strategy="Momentum", tie_break=False, reason="r", tie_runner_up=None, ranked=[])
-    output = SimpleNamespace(ranking=ranking, ohlcv=SimpleNamespace(tail=lambda n: None), timestamp=pd.Timestamp("2031-03-03 11:00"),
+    output = SimpleNamespace(ranking=ranking, ohlcv=SimpleNamespace(tail=lambda n: None), timestamp=now_ist(),
                              market_state=SimpleNamespace(get=lambda k, d=None: None), data_quality_status="OK")
     account = AccountState(equity=1_000_000.0, peak_equity=1_000_000.0, daily_pnl=0.0, open_positions_count=0, trades_today=0,
                            exposure_by_strategy={}, total_exposure=0.0, broker_connected=True, kill_switch_engaged=False)
