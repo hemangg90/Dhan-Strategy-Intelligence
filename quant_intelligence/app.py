@@ -15,18 +15,17 @@ import streamlit as st
 
 from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.database.db import init_db
+from quant_intelligence.ui.components import chip
 from quant_intelligence.ui.credentials_panel import render_credentials_panel
+from quant_intelligence.ui.dashboard import decision_banner, hero_header, kpi_cards, probability_bars, ranking_table
+from quant_intelligence.ui.decision_view import explanation_rows
+from quant_intelligence.utils.timeutil import now_ist
 from quant_intelligence.ui.state import init_session_state, run_pipeline_cached
 from quant_intelligence.ui.theme import apply_theme, status_badge
 
 init_db()
 apply_theme()
 init_session_state()
-
-st.title("Quant Strategy Intelligence & Execution System")
-st.caption("Research-first terminal for Indian index derivatives. Central question: "
-           "which strategy ranks highest on historical, cost-adjusted conditional expectancy right now? "
-           "Results are historical and are not predictions; no edge over a random pick has been demonstrated.")
 
 with st.sidebar:
     st.header("Instrument & Data")
@@ -63,52 +62,61 @@ if output is None and error is None:
         error = st.session_state.get("pipeline_error")
 
 if error:
+    st.title("Quant Strategy Intelligence")
     st.error(f"Pipeline could not run: {error}")
     st.stop()
 
-st.subheader(f"{output.instrument} — as of {output.timestamp}")
+def _age_text(ts) -> str:
+    try:
+        minutes = (now_ist().replace(tzinfo=None) - ts.replace(tzinfo=None)).total_seconds() / 60
+    except Exception:
+        return "age n/a"
+    return f"{minutes / 60:.1f} h old" if minutes > 120 else f"{max(minutes, 0):.0f} min old"
 
-col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("Data Quality", output.data_quality_status)
-col2.metric("Regime", output.regime_label, f"{output.regime_confidence*100:.0f}% confidence")
-col3.metric("Strategies Evaluated", len(output.strategy_intel))
-col4.metric("Eligible Strategies", sum(1 for s in output.strategy_intel if s.score.eligible))
-decision_label = "NO TRADE" if output.ranking.is_no_trade else output.ranking.selected_strategy
-col5.metric("Decision", decision_label)
 
-st.divider()
+quality = output.data_quality_status
+ok_quality = quality == "OK"
+mode_chips = [
+    chip(f"Data {quality}", "good" if ok_quality else "critical"),
+    chip("PAPER MODE", "info"),
+    chip("LIVE ORDERS LOCKED" if SETTINGS.demo_lockdown else "Orders simulated", "neutral"),
+]
+hero_header(
+    "Quant Strategy Intelligence",
+    f"<b>{output.instrument}</b> &middot; last bar {output.timestamp:%d %b %Y %H:%M} ({_age_text(output.timestamp)}) "
+    "&middot; research-first terminal for Indian index derivatives",
+    mode_chips,
+)
 
-badge_class = "qi-badge-notrade" if output.ranking.is_no_trade else "qi-badge-trade"
-badge_text = "NO TRADE" if output.ranking.is_no_trade else f"SELECTED: {output.ranking.selected_strategy}"
-st.markdown(f'<span class="qi-badge {badge_class}" style="font-size:1rem;">{badge_text}</span>', unsafe_allow_html=True)
-st.write(f"**Reason:** {output.ranking.reason}")
+ranking = output.ranking
+eligible = sum(1 for s in output.strategy_intel if s.score.eligible)
+kpi_cards([
+    {"label": "Market regime", "value": str(output.regime_label).replace("_", " ").title(),
+     "sub": f"{output.regime_confidence * 100:.0f}% model confidence (uncalibrated)"},
+    {"label": "Data quality", "value": quality, "sub": f"{len(output.data_quality_issues or [])} issue(s)",
+     "tone": "good" if ok_quality else "critical"},
+    {"label": "Strategies evaluated", "value": len(output.strategy_intel), "sub": "17-strategy library"},
+    {"label": "Eligible now", "value": eligible, "sub": "clear edge and confidence bars",
+     "tone": "good" if eligible else "warning"},
+])
+for issue in output.data_quality_issues or []:
+    st.warning(str(issue))
 
-st.subheader("Strategy Ranking")
-rows = []
-for s in output.ranking.ranked:
-    rows.append(
-        {
-            "Strategy": s.strategy_name,
-            "Score": round(s.score, 4),
-            "Expected R (conditional)": round(s.expected_r, 3) if s.expected_r is not None else None,
-            "Win Probability": f"{s.prob_positive_return*100:.1f}%" if s.prob_positive_return is not None else "N/A",
-            "Confidence": s.confidence_label,
-            "Sample Size": s.sample_size,
-            "Max Drawdown": round(s.max_drawdown, 1) if s.max_drawdown is not None else None,
-            "Status": "ELIGIBLE" if s.eligible else "INELIGIBLE",
-            "Reason (if ineligible)": s.ineligibility_reason or "",
-        }
-    )
-st.dataframe(rows, width="stretch", hide_index=True)
+decision_banner(ranking.is_no_trade, ranking.selected_strategy, ranking.reason, ranking.tie_break)
+st.caption("A decision is not an order: it still has to pass the independent risk engine and a real setup must trigger. "
+           "Results are historical statistics, not predictions.")
 
-st.subheader("Regime Probabilities")
-regime_cols = st.columns(len(output.regime_probabilities))
-for col, (regime, prob) in zip(regime_cols, sorted(output.regime_probabilities.items(), key=lambda x: -x[1])):
-    col.metric(regime, f"{prob*100:.0f}%")
+left, right = st.columns([2.2, 1], gap="large")
+with left:
+    st.subheader("Strategy ranking")
+    ranking_table(explanation_rows(output), show_why=False)
+with right:
+    st.subheader("Regime probabilities")
+    probability_bars(output.regime_probabilities)
+    st.caption("Output of a rule-based classifier; probabilities are not calibrated against outcomes.")
 
 st.divider()
 st.caption(
-    "Use the pages in the sidebar for Market State detail, Strategy Intelligence drill-down, "
-    "Backtest Lab, Historical Analogues, Paper Trading, Positions & Risk Control, Research Reports, the Daily Report, "
-    "and the NSE Heatmap (pick the day's movers for the paper traders)."
+    "Decision Center explains every ranking. Use the sidebar for Market State, Strategy Intelligence, Backtest Lab, "
+    "Historical Analogues, Paper Trading, Risk Control, Research Reports, the Daily Report and the NSE Heatmap."
 )

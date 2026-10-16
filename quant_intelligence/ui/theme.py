@@ -127,6 +127,9 @@ h2, h3 {{ letter-spacing: -0.005em; }}
 def apply_theme() -> None:
     st.set_page_config(page_title="Quant Intelligence Terminal", layout="wide", page_icon="\U0001F4C8")
     st.markdown(DARK_CSS, unsafe_allow_html=True)
+    from quant_intelligence.ui.dashboard import DASH_CSS  # lazy: dashboard imports components
+
+    st.markdown(DASH_CSS, unsafe_allow_html=True)
 
 
 def status_badge(status: str) -> str:
