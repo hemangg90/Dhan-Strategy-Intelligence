@@ -19,6 +19,8 @@ def strategy_status(score, selected: str | None, tie_break: bool = False) -> tup
             return "TIE-BREAK", "Selected only because the top strategies were statistically tied (no proven edge over the runner-up)."
         return "SELECTED", "Highest historical conditional score among eligible strategies."
     if score.eligible:
+        if selected is None:
+            return "ELIGIBLE", "Clears the edge and confidence thresholds, but no strategy was selected (see the decision reason)."
         return "ELIGIBLE", "Clears the edge and confidence thresholds but ranks below the selected strategy."
     if score.strategy_name in CHAIN_AWARE_STRATEGY_NAMES:
         return "REJECTED", NO_HISTORY_REASON

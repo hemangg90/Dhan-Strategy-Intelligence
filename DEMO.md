@@ -30,6 +30,19 @@ streamlit run quant_intelligence/app.py
 Open http://localhost:8501. `DEMO_LOCKDOWN=1` forces paper mode regardless of `.env`, blocks `DhanBroker.place_order`,
 and hides the client ID, token and credential form.
 
+## Website (recommended for the stage)
+
+A read-only website (top navigation: Dashboard, Strategies, Backtests, Risk, Method) runs on the same research core.
+It has no order endpoints at all.
+
+```
+$env:DEMO_LOCKDOWN = "1"
+python -m uvicorn quant_intelligence.web.app:app --port 8000
+```
+
+Open http://localhost:8000. The default view is computed in the background at startup (about 30-40 seconds), so start
+it a few minutes early; later refreshes never block the page. The Streamlit app above remains as a fallback.
+
 ## Five-minute sequence
 
 | Min | Page | Say / show |
