@@ -48,7 +48,7 @@ tail = output.features.tail(300)
 metric_choice = st.selectbox("Feature to chart", [c for c in output.features.columns if c != "timestamp"], index=list(output.features.columns).index("atr_percentile_100") - 1 if "atr_percentile_100" in output.features.columns else 0)
 fig = go.Figure()
 fig.add_trace(go.Scatter(x=tail["timestamp"], y=tail[metric_choice], mode="lines", name=metric_choice))
-fig.update_layout(template="plotly_dark", height=350, margin=dict(l=20, r=20, t=30, b=20))
+fig.update_layout(template="plotly_white", height=350, margin=dict(l=20, r=20, t=30, b=20))
 st.plotly_chart(fig, width="stretch")
 
 st.divider()

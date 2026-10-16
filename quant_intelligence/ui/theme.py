@@ -1,6 +1,6 @@
-"""Dark, information-dense trading theme shared across pages.
+"""Light, minimal, information-dense trading theme shared across pages (matches the Backtest Workbench).
 
-Design tokens follow the data-viz palette (validated in dark mode): categorical blue / orange / aqua /
+Design tokens follow the data-viz palette (adapted for a light surface): categorical blue / orange / aqua /
 violet for series identity, and the reserved status colours good / warning / serious / critical for
 state and P&L sign. Status colours are never the only signal - they always travel with an icon
 (a triangle, a dot or a label) so they survive colour-blindness and print.
@@ -10,16 +10,16 @@ from __future__ import annotations
 import streamlit as st
 
 # ---- tokens (kept in sync with the CSS custom properties below and with ui/charts.py) --------------
-SURFACE = "#0e1117"
-CARD = "#151a23"
-CARD_2 = "#1b2130"
-BORDER = "#262d3b"
-TEXT = "#e8eaed"
-TEXT_2 = "#aab0bc"
-MUTED = "#7d8594"
+SURFACE = "#f7f8fa"
+CARD = "#ffffff"
+CARD_2 = "#f3f4f6"
+BORDER = "#e5e7eb"
+TEXT = "#111827"
+TEXT_2 = "#4b5563"
+MUTED = "#6b7280"
 
-BLUE, ORANGE, AQUA, VIOLET = "#3987e5", "#d95926", "#199e70", "#9085e9"  # categorical slots 1-3, 7
-GOOD, WARNING, SERIOUS, CRITICAL = "#0ca30c", "#fab219", "#ec835a", "#d03b3b"  # status (reserved)
+BLUE, ORANGE, AQUA, VIOLET = "#2563eb", "#d97706", "#0d9488", "#7c3aed"  # categorical slots 1-3, 7
+GOOD, WARNING, SERIOUS, CRITICAL = "#059669", "#d97706", "#ea580c", "#dc2626"  # status (reserved)
 
 TONE_COLOR = {"good": GOOD, "warning": WARNING, "serious": SERIOUS, "critical": CRITICAL,
               "info": BLUE, "neutral": MUTED, "muted": MUTED}
@@ -33,6 +33,14 @@ DARK_CSS = f"""
   --qi-good: {GOOD}; --qi-warning: {WARNING}; --qi-serious: {SERIOUS}; --qi-critical: {CRITICAL};
 }}
 .stApp {{ background-color: var(--qi-surface); }}
+.stApp, .stApp p, .stApp label, .stApp li {{ color: var(--qi-text); }}
+[data-testid="stSidebar"] {{ background: var(--qi-card); border-right: 1px solid var(--qi-border); }}
+div[data-testid="stVerticalBlockBorderWrapper"] {{ background: var(--qi-card); border-color: var(--qi-border) !important; border-radius: 12px; }}
+[data-testid="stMetric"] {{ border: 1px solid var(--qi-border); padding: 10px 12px; }}
+.stTextInput input, .stNumberInput input, .stSelectbox div[data-baseweb="select"] > div {{ background: var(--qi-card); border-color: var(--qi-border); }}
+[data-testid="stExpander"] {{ background: var(--qi-card); border: 1px solid var(--qi-border); border-radius: 12px; }}
+hr {{ border-color: var(--qi-border); }}
+.stApp [data-testid="stMetricValue"], .stApp code {{ font-family: ui-monospace, Menlo, Consolas, monospace; }}
 .block-container {{ padding-top: 2.2rem; padding-bottom: 3rem; max-width: 1500px; }}
 h1 {{ font-size: 1.7rem !important; font-weight: 650 !important; letter-spacing: -0.01em; margin-bottom: 0.1rem; }}
 h2, h3 {{ letter-spacing: -0.005em; }}
@@ -44,11 +52,11 @@ h2, h3 {{ letter-spacing: -0.005em; }}
 .qi-chip {{ display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px;
   font-size: 0.74rem; font-weight: 600; line-height: 1.5; white-space: nowrap;
   border: 1px solid var(--qi-border); background: var(--qi-card-2); color: var(--qi-text-2); }}
-.qi-chip.good {{ color: #7ee27e; border-color: rgba(12,163,12,.45); background: rgba(12,163,12,.12); }}
-.qi-chip.warning {{ color: var(--qi-warning); border-color: rgba(250,178,25,.45); background: rgba(250,178,25,.10); }}
-.qi-chip.serious {{ color: var(--qi-serious); border-color: rgba(236,131,90,.45); background: rgba(236,131,90,.10); }}
-.qi-chip.critical {{ color: #f08a8a; border-color: rgba(208,59,59,.55); background: rgba(208,59,59,.14); }}
-.qi-chip.info {{ color: #8dbcf5; border-color: rgba(57,135,229,.5); background: rgba(57,135,229,.12); }}
+.qi-chip.good {{ color: #047857; border-color: rgba(5,150,105,.35); background: rgba(5,150,105,.08); }}
+.qi-chip.warning {{ color: #b45309; border-color: rgba(217,119,6,.35); background: rgba(217,119,6,.08); }}
+.qi-chip.serious {{ color: #c2410c; border-color: rgba(234,88,12,.35); background: rgba(234,88,12,.08); }}
+.qi-chip.critical {{ color: #b91c1c; border-color: rgba(220,38,38,.35); background: rgba(220,38,38,.08); }}
+.qi-chip.info {{ color: #1d4ed8; border-color: rgba(37,99,235,.35); background: rgba(37,99,235,.08); }}
 .qi-chip.muted {{ color: var(--qi-text-2); }}
 .qi-dot {{ width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: currentColor; }}
 
@@ -60,7 +68,7 @@ h2, h3 {{ letter-spacing: -0.005em; }}
 
 /* P&L text: colour + triangle + sign */
 .qi-pnl {{ font-variant-numeric: tabular-nums; font-weight: 650; white-space: nowrap; }}
-.qi-pnl.good {{ color: #2bc02b; }} .qi-pnl.critical {{ color: #ee6b6b; }} .qi-pnl.neutral {{ color: var(--qi-text-2); }}
+.qi-pnl.good {{ color: #059669; }} .qi-pnl.critical {{ color: #dc2626; }} .qi-pnl.neutral {{ color: var(--qi-text-2); }}
 .qi-pnl small {{ font-weight: 500; opacity: .85; margin-left: 4px; }}
 
 /* position card */
@@ -105,13 +113,13 @@ h2, h3 {{ letter-spacing: -0.005em; }}
 .qi-empty b {{ display: block; color: var(--qi-text); font-size: 1.0rem; margin-bottom: 4px; }}
 
 /* legacy badges */
-.qi-status-ok {{ color: #2ecc71; font-weight: 600; }} .qi-status-warn {{ color: #f39c12; font-weight: 600; }}
-.qi-status-fail {{ color: #e74c3c; font-weight: 600; }}
+.qi-status-ok {{ color: #059669; font-weight: 600; }} .qi-status-warn {{ color: #d97706; font-weight: 600; }}
+.qi-status-fail {{ color: #dc2626; font-weight: 600; }}
 .qi-badge {{ display: inline-block; padding: 2px 10px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; margin-right: 6px; }}
-.qi-badge-trade {{ background-color: #1e5631; color: #d4f7dc; }}
-.qi-badge-notrade {{ background-color: #5c1e1e; color: #f7d4d4; }}
-.qi-badge-paper {{ background-color: #1e3a5c; color: #d4e7f7; }}
-.qi-badge-live {{ background-color: #7a1f1f; color: #ffe0e0; }}
+.qi-badge-trade {{ background-color: #d1fae5; color: #065f46; }}
+.qi-badge-notrade {{ background-color: #fee2e2; color: #991b1b; }}
+.qi-badge-paper {{ background-color: #e0ecff; color: #1e40af; }}
+.qi-badge-live {{ background-color: #dc2626; color: #ffffff; }}
 </style>
 """
 

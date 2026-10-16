@@ -4,9 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import datetime as dt
-from quant_intelligence.utils.timeutil import now_ist
 
-import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -14,116 +12,236 @@ from quant_intelligence.backtesting.engine import run_backtest, walk_forward
 from quant_intelligence.data.data_manager import DataManager, DataUnavailableError
 from quant_intelligence.features.feature_engine import compute_features
 from quant_intelligence.strategies.registry import STRATEGY_CLASSES, get_strategy
+from quant_intelligence.ui import backtest_workbench as wb
+from quant_intelligence.ui.state import init_session_state
 from quant_intelligence.ui.theme import apply_theme
+from quant_intelligence.utils.timeutil import now_ist
 
 apply_theme()
-st.title("Backtest Lab")
-st.caption("Event-driven backtesting with in-sample / out-of-sample separation and walk-forward analysis.")
+init_session_state()
 
-col1, col2, col3 = st.columns(3)
-instrument = col1.text_input("Instrument", "NIFTY")
-timeframe = col2.selectbox("Timeframe", ["5min", "15min", "1min", "3min"])
-strategy_name = col3.selectbox("Strategy", list(STRATEGY_CLASSES.keys()))
+INK, MUTED, GREEN, RED, LINE = "#111827", "#6b7280", "#059669", "#dc2626", "#e5e7eb"
 
-col4, col5 = st.columns(2)
-lookback_days = col4.slider("Total lookback (days)", 20, 365, 90)
-oos_fraction = col5.slider("Out-of-sample holdout (fraction of most recent data)", 0.1, 0.5, 0.25)
+# Light workbench styling, scoped to this page (the CSS is only emitted when this page renders).
+st.markdown(
+    f"""
+<style>
+.stApp {{ background:#f7f8fa; }}
+.stApp, .stApp p, .stApp label, .stApp span, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp li {{ color:{INK}; }}
+[data-testid="stSidebar"] {{ background:#ffffff; }}
+[data-testid="stSidebar"] * {{ color:{INK}; }}
+div[data-testid="stVerticalBlockBorderWrapper"] {{ background:#ffffff; border-color:{LINE} !important; border-radius:12px; }}
+.stTextInput input, .stSelectbox div[data-baseweb="select"] > div, .stNumberInput input {{ background:#ffffff; color:{INK}; border-color:{LINE}; }}
+.wb-card {{ border:1px solid {LINE}; border-radius:12px; padding:10px 12px; background:#fff; }}
+.wb-card.sel {{ background:{INK}; border-color:{INK}; }}
+.wb-card.sel, .wb-card.sel * {{ color:#f9fafb !important; }}
+.wb-top {{ display:flex; justify-content:space-between; font-weight:600; font-size:0.95rem; }}
+.wb-sub {{ color:{MUTED}; font-size:0.78rem; margin:2px 0 6px; }}
+.wb-mono {{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:0.78rem; color:{MUTED}; display:flex; gap:14px; }}
+.wb-kpi-label {{ color:{MUTED}; font-size:0.68rem; letter-spacing:0.08em; text-transform:uppercase; }}
+.wb-kpi-val {{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:1.15rem; font-weight:600; }}
+.wb-pos {{ color:{GREEN} !important; }} .wb-neg {{ color:{RED} !important; }}
+.wb-big {{ font-family:ui-monospace,Menlo,Consolas,monospace; font-size:2rem; font-weight:700; text-align:right; }}
+.wb-pill {{ background:#eef2f7; color:{MUTED}; border-radius:999px; padding:2px 10px; font-size:0.75rem; margin-left:8px; }}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
-strategy_cls = STRATEGY_CLASSES[strategy_name]
-default_params = strategy_cls.default_parameters
-st.markdown("**Parameters** (edit and re-run; parameters are NOT auto-optimized on out-of-sample data)")
-param_cols = st.columns(len(default_params)) if default_params else []
-edited_params = {}
-for i, (k, v) in enumerate(default_params.items()):
-    if isinstance(v, (int, float)):
-        edited_params[k] = param_cols[i].number_input(k, value=float(v))
-    else:
-        edited_params[k] = param_cols[i].text_input(k, value=str(v))
 
-run = st.button("Run backtest", type="primary")
+def _sign_class(x):
+    return "" if x is None else ("wb-pos" if x > 0 else "wb-neg" if x < 0 else "")
 
-if run:
+
+def _fmt_pct(x, nd=1, signed=True):
+    return "n/a" if x is None else f"{x:+.{nd}f}%" if signed else f"{x:.{nd}f}%"
+
+
+def _d(ts):
+    return "n/a" if ts is None else f"{ts:%b} {ts.day}, {ts.year}"
+
+
+def _chart_layout(fig, height, yfmt=None):
+    fig.update_layout(
+        template="plotly_white", height=height, margin=dict(l=10, r=10, t=10, b=10), paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", legend=dict(orientation="h", y=1.12, x=0.02), font=dict(color=MUTED, size=11),
+        hovermode="x unified",
+    )
+    fig.update_xaxes(showgrid=False, linecolor=LINE)
+    fig.update_yaxes(gridcolor="#eef0f3", zeroline=False, tickformat=yfmt)
+    return fig
+
+
+def _new_backtest_form():
+    """Existing Backtest Lab functionality: configure and run an in-sample / out-of-sample backtest."""
+    c1, c2, c3 = st.columns(3)
+    instrument = c1.text_input("Instrument", "NIFTY")
+    timeframe = c2.selectbox("Timeframe", ["5min", "15min", "1min", "3min"])
+    strategy_name = c3.selectbox("Strategy", list(STRATEGY_CLASSES.keys()))
+    c4, c5 = st.columns(2)
+    lookback_days = c4.slider("Total lookback (days)", 20, 365, 90)
+    oos_fraction = c5.slider("Out-of-sample holdout (most recent fraction)", 0.1, 0.5, 0.25)
+
+    defaults = STRATEGY_CLASSES[strategy_name].default_parameters
+    st.caption("Parameters are edited by hand and are NOT optimised on out-of-sample data.")
+    pcols = st.columns(len(defaults)) if defaults else []
+    params = {}
+    for i, (k, v) in enumerate(defaults.items()):
+        params[k] = pcols[i].number_input(k, value=float(v)) if isinstance(v, (int, float)) else pcols[i].text_input(k, value=str(v))
+
+    if not st.button("Run backtest", type="primary"):
+        return
     end = now_ist()
     start = end - dt.timedelta(days=lookback_days)
-    dm = DataManager()
     with st.spinner("Fetching data and computing features..."):
         try:
-            ohlcv, metadata = dm.get_ohlcv(instrument, timeframe, start, end)
+            ohlcv, _ = DataManager().get_ohlcv(instrument, timeframe, start, end)
         except DataUnavailableError as e:
             st.error(str(e))
-            st.stop()
+            return
         if len(ohlcv) < 100:
             st.error("Not enough data for the selected window.")
-            st.stop()
-        features = compute_features(ohlcv)
-
-    split_idx = int(len(ohlcv) * (1 - oos_fraction))
-    is_ohlcv, is_features = ohlcv.iloc[:split_idx].reset_index(drop=True), features.iloc[:split_idx].reset_index(drop=True)
-    oos_ohlcv, oos_features = ohlcv.iloc[split_idx:].reset_index(drop=True), features.iloc[split_idx:].reset_index(drop=True)
-
-    strategy_is = get_strategy(strategy_name, edited_params)
-    strategy_oos = get_strategy(strategy_name, edited_params)
-
-    with st.spinner("Running in-sample backtest..."):
-        is_result = run_backtest(strategy_is, is_ohlcv, is_features, instrument, split="IN_SAMPLE")
-    with st.spinner("Running out-of-sample backtest (held-out most recent data)..."):
-        oos_result = run_backtest(strategy_oos, oos_ohlcv, oos_features, instrument, split="OUT_OF_SAMPLE")
-
-    st.session_state["last_backtest"] = {"is": is_result, "oos": oos_result, "ohlcv": ohlcv}
-
-if "last_backtest" in st.session_state:
-    is_result = st.session_state["last_backtest"]["is"]
-    oos_result = st.session_state["last_backtest"]["oos"]
-
-    tab1, tab2, tab3 = st.tabs(["In-Sample", "Out-of-Sample", "Walk-Forward"])
-
-    def render_result(result, key_prefix):
-        n_trades = result.metrics.get("n_trades", 0)
-        if n_trades == 0:
-            st.warning("No trades generated in this window.")
             return
-        if n_trades < 30:
-            st.warning(f"Sample size warning: only {n_trades} trades. Statistics may be unreliable.")
+        features = compute_features(ohlcv)
+    split = int(len(ohlcv) * (1 - oos_fraction))
+    with st.spinner("Running in-sample and out-of-sample backtests..."):
+        is_res = run_backtest(get_strategy(strategy_name, params), ohlcv.iloc[:split].reset_index(drop=True),
+                              features.iloc[:split].reset_index(drop=True), instrument, split="IN_SAMPLE")
+        oos_res = run_backtest(get_strategy(strategy_name, params), ohlcv.iloc[split:].reset_index(drop=True),
+                               features.iloc[split:].reset_index(drop=True), instrument, split="OUT_OF_SAMPLE")
+    st.session_state["wb_selected"] = oos_res.run_id if oos_res.metrics.get("n_trades") else is_res.run_id
+    is_er, oos_er = is_res.metrics.get("expected_r"), oos_res.metrics.get("expected_r")
+    if is_er is not None and oos_er is not None and is_er > 0 and oos_er < is_er * 0.3:
+        st.session_state["wb_notice"] = (
+            f"In-sample expected R ({is_er:.3f}) does not survive out-of-sample ({oos_er:.3f}). This is evidence "
+            "AGAINST a robust edge in this window - do not assume profitability."
+        )
+    else:
+        st.session_state.pop("wb_notice", None)
+    st.session_state["wb_last_inputs"] = dict(strategy_name=strategy_name, params=params, instrument=instrument, ohlcv=ohlcv)
+    st.rerun()
 
-        cols = st.columns(5)
-        cols[0].metric("Trades", n_trades)
-        cols[1].metric("Win Rate", f"{result.metrics['win_rate']*100:.1f}%")
-        cols[2].metric("Expected R", round(result.metrics["expected_r"], 3))
-        cols[3].metric("Sharpe", round(result.metrics["sharpe"], 2) if not np.isnan(result.metrics["sharpe"]) else "N/A")
-        cols[4].metric("Max Drawdown (INR)", round(result.metrics["max_drawdown"], 0))
 
-        r_multiples = [t.r_multiple for t in result.trades]
-        equity = np.cumsum(r_multiples)
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(y=equity, mode="lines", name="Cumulative R"))
-        fig.update_layout(template="plotly_dark", height=300, title="Equity Curve (R multiples)", margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig, width="stretch", key=f"{key_prefix}_equity")
+runs = wb.list_runs()
+capital = wb.starting_capital()
 
-        fig2 = go.Figure()
-        fig2.add_trace(go.Histogram(x=r_multiples, nbinsx=30))
-        fig2.update_layout(template="plotly_dark", height=300, title="R-Multiple Distribution", margin=dict(l=20, r=20, t=40, b=20))
-        st.plotly_chart(fig2, width="stretch", key=f"{key_prefix}_hist")
+left, right = st.columns([1, 2.6], gap="large")
 
-    with tab1:
-        render_result(is_result, "is")
-    with tab2:
-        render_result(oos_result, "oos")
-        if is_result.metrics.get("n_trades", 0) and oos_result.metrics.get("n_trades", 0):
-            is_er = is_result.metrics["expected_r"]
-            oos_er = oos_result.metrics["expected_r"]
-            if (is_er > 0) and (oos_er < is_er * 0.3):
-                st.error(
-                    f"In-sample expected R ({is_er:.3f}) does not survive out-of-sample "
-                    f"({oos_er:.3f}). This is evidence AGAINST the strategy having a robust edge "
-                    "in the current window - do not assume profitability."
-                )
-    with tab3:
-        if st.button("Run walk-forward (4 folds)"):
-            ohlcv_all = st.session_state["last_backtest"]["ohlcv"]
-            features_all = compute_features(ohlcv_all)
-            wf_results = walk_forward(
-                lambda: get_strategy(strategy_name, edited_params), ohlcv_all, features_all, instrument, n_folds=4
+# ---------------------------------------------------------------- left: run list
+with left:
+    h1, h2 = st.columns([4, 1])
+    h1.markdown(f"### Backtest Workbench\n<span style='color:{MUTED};font-size:0.85rem'>{len(runs)} runs total</span>",
+                unsafe_allow_html=True)
+    query = st.text_input("Search", placeholder="Search runs, strategy, instrument...", label_visibility="collapsed")
+    outcome = st.radio("Filter", ["All", "Win", "Loss"], horizontal=True, label_visibility="collapsed")
+    shown = wb.filter_runs(runs, query, outcome)
+    selected_id = st.session_state.get("wb_selected")
+    if shown and selected_id not in {r.run_id for r in shown}:
+        selected_id = shown[0].run_id
+
+    with st.container(height=640, border=False):
+        if not shown:
+            st.info("No backtest runs yet. Open **New backtest** on the right and run one." if not runs else "No runs match.")
+        for i, r in enumerate(shown):
+            sel = r.run_id == selected_id
+            ret_cls = _sign_class(r.total_return_pct)
+            wr = f"{r.win_rate * 100:.0f}%" if r.win_rate is not None else "n/a"
+            st.markdown(
+                f"""<div class="wb-card{' sel' if sel else ''}">
+<div class="wb-top"><span>{r.strategy}</span><span class="{ret_cls}">{_fmt_pct(r.total_return_pct)}</span></div>
+<div class="wb-sub">{r.instrument} · {r.split.replace('_', ' ').title()}</div>
+<div class="wb-mono"><span>DD: {_fmt_pct(r.max_dd_pct)}</span><span>WR: {wr}</span><span>{r.n_trades} trades</span></div>
+<div class="wb-sub" style="margin-top:6px">{_d(r.start)} → {_d(r.end)}</div></div>""",
+                unsafe_allow_html=True,
             )
-            for r in wf_results:
-                st.markdown(f"**{r.split}**")
-                render_result(r, r.split)
+            if not sel and st.button("Open", key=f"open_{r.run_id}", use_container_width=True):
+                st.session_state["wb_selected"] = r.run_id
+                st.rerun()
+    st.caption(f"Showing {len(shown)} of {len(runs)} runs")
+
+# ---------------------------------------------------------------- right: detail
+with right:
+    with st.expander("New backtest", expanded=not runs):
+        _new_backtest_form()
+
+    if st.session_state.get("wb_notice"):
+        st.error(st.session_state["wb_notice"])
+
+    run = next((r for r in shown if r.run_id == selected_id), None) if shown else None
+    if run is None:
+        st.stop()
+
+    trades = wb.load_trades(run.run_id)
+    equity = wb.equity_curve(trades, capital)
+    dd = wb.drawdown_pct(equity, capital)
+    daily = wb.daily_returns_pct(trades, capital)
+    sharpe = wb.daily_sharpe(daily)
+    final = float(equity.iloc[-1]) if len(equity) else None
+
+    t1, t2 = st.columns([3, 1])
+    t1.markdown(
+        f"## {run.strategy} <span class='wb-pill'>completed</span>\n"
+        f"<span style='color:{MUTED}'>{run.instrument} · {run.split.replace('_', ' ').title()} · {_d(run.start)} → {_d(run.end)}</span>",
+        unsafe_allow_html=True,
+    )
+    t2.markdown(f"<div class='wb-big {_sign_class(run.total_return_pct)}'>{_fmt_pct(run.total_return_pct)}</div>",
+                unsafe_allow_html=True)
+
+    kpis = [
+        ("Max DD", _fmt_pct(float(dd.min()) if len(dd) else None), "wb-neg"),
+        ("Sharpe (daily)", "n/a" if sharpe is None else f"{sharpe:.2f}", _sign_class(sharpe)),
+        ("Win rate", "n/a" if run.win_rate is None else f"{run.win_rate * 100:.1f}%", ""),
+        ("Trades", str(run.n_trades), ""),
+        ("Initial", f"Rs {capital:,.0f}", ""),
+        ("Final", "n/a" if final is None else f"Rs {final:,.0f}", _sign_class(None if final is None else final - capital)),
+    ]
+    for col, (label, val, cls) in zip(st.columns(6), kpis):
+        col.markdown(f"<div class='wb-kpi-label'>{label}</div><div class='wb-kpi-val {cls}'>{val}</div>", unsafe_allow_html=True)
+    notes = [f"Only {run.n_trades} trades: statistics may be unreliable."] if run.n_trades < 30 else []
+    notes.append("Net of modelled costs. Win rate is gross R > 0. Historical backtest, not a prediction.")
+    st.caption(" ".join(notes))
+
+    if len(equity) == 0:
+        st.warning("This run has no stored trades, so no curves can be drawn.")
+        st.stop()
+
+    with st.container(border=True):
+        st.markdown("**Equity Curve** <span class='wb-pill'>PRIMARY</span>", unsafe_allow_html=True)
+        st.caption("Strategy account value after each closed trade vs buy-and-hold of the instrument (when cached prices exist).")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=equity.index, y=equity.values, name="Strategy", line=dict(color=INK, width=2),
+                                 fill="tozeroy", fillcolor="rgba(17,24,39,0.05)"))
+        bench = wb.benchmark_curve(run.instrument, run.start, run.end, capital)
+        if bench is not None:
+            fig.add_trace(go.Scatter(x=bench.index, y=bench.values, name="Benchmark (buy & hold)",
+                                     line=dict(color="#9ca3af", width=1.5, dash="dash")))
+        lo = min(float(equity.min()), float(bench.min()) if bench is not None else float(equity.min()))
+        hi = max(float(equity.max()), float(bench.max()) if bench is not None else float(equity.max()))
+        pad = (hi - lo) * 0.15 or capital * 0.01
+        fig.update_yaxes(range=[lo - pad, hi + pad])
+        st.plotly_chart(_chart_layout(fig, 300, ",.0f"), width="stretch", key="wb_equity")
+
+    with st.container(border=True):
+        st.markdown("**Drawdown**")
+        st.caption("Peak-to-trough decline of the account after each closed trade.")
+        fig = go.Figure(go.Scatter(x=dd.index, y=dd.values, line=dict(color=RED, width=1.5), fill="tozeroy",
+                                   fillcolor="rgba(220,38,38,0.12)", name="Drawdown"))
+        st.plotly_chart(_chart_layout(fig, 220, ".1f"), width="stretch", key="wb_dd")
+
+    with st.container(border=True):
+        st.markdown("**Daily Returns**")
+        st.caption("Day-by-day net P&L as a percent of the account at the start of that day.")
+        colors = [GREEN if v >= 0 else RED for v in daily.values]
+        fig = go.Figure(go.Bar(x=daily.index, y=daily.values, marker_color=colors, name="Daily return"))
+        st.plotly_chart(_chart_layout(fig, 220, ".1f"), width="stretch", key="wb_daily")
+
+    with st.expander("Walk-forward (4 folds)"):
+        last = st.session_state.get("wb_last_inputs")
+        if not last:
+            st.caption("Run a new backtest first; walk-forward reuses its data and parameters.")
+        elif st.button("Run walk-forward"):
+            feats = compute_features(last["ohlcv"])
+            res = walk_forward(lambda: get_strategy(last["strategy_name"], last["params"]), last["ohlcv"], feats,
+                               last["instrument"], n_folds=4)
+            st.session_state["wb_selected"] = res[-1].run_id if res else st.session_state.get("wb_selected")
+            st.rerun()

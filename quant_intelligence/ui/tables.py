@@ -7,7 +7,7 @@ import pandas as pd
 from quant_intelligence.ui import format as F
 from quant_intelligence.ui.position_views import exit_reason_label
 
-_GOOD, _BAD = "#2bc02b", "#ee6b6b"
+_GOOD, _BAD = "#059669", "#dc2626"
 
 
 def _pnl_color(v) -> str:
@@ -150,7 +150,7 @@ def ladder_table(df: pd.DataFrame, spot: float):
             css[:4] = ["background-color: rgba(57,135,229,0.10)"] * 4
         if strikes[i] > spot:  # puts in the money
             css[5:] = ["background-color: rgba(217,89,38,0.10)"] * 4
-        css[4] = "font-weight: 700; background-color: rgba(255,255,255,0.05)"
+        css[4] = "font-weight: 700; background-color: rgba(17,24,39,0.05)"
         if atm[i]:
             css = ["background-color: rgba(57,135,229,0.28); font-weight: 700"] * n
         return css

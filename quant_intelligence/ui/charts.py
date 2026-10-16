@@ -18,7 +18,7 @@ from quant_intelligence.ui.theme import (
 )
 from quant_intelligence.utils.market_profile import NSE, MarketProfile
 
-GRID = "rgba(255,255,255,0.07)"
+GRID = "#eef0f3"
 _FONT = dict(family="Inter, Segoe UI, system-ui, sans-serif", color=TEXT_2, size=12)
 
 
@@ -180,7 +180,7 @@ def pnl_bar_chart(df: pd.DataFrame, label: str, value: str = "net_pnl", height: 
 
 # Diverging pair for "up" and "down": blue and orange around a dark neutral, so the green/red used for profit and loss
 # elsewhere keep their meaning. Direction is never colour-only: every tile carries an arrow and a signed percentage.
-UP_COLOR, DOWN_COLOR, FLAT_COLOR = "#1d5fbf", "#b85a0b", "#3a3f4a"
+UP_COLOR, DOWN_COLOR, FLAT_COLOR = "#1d5fbf", "#b85a0b", "#9ca3af"
 
 
 def heatmap_treemap(df: pd.DataFrame, size_col: str | None = None, color_limit: float = 3.0, height: int = 520) -> go.Figure:
@@ -277,7 +277,7 @@ def regime_chart(probabilities: dict, height: int = 210, top: int = 5) -> go.Fig
     items = sorted(probabilities.items(), key=lambda kv: kv[1], reverse=True)[:top][::-1]
     labels = [k.replace("_", " ").title() for k, _ in items]
     values = [v * 100 for _, v in items]
-    colors = [BLUE if i == len(items) - 1 else "#4a5160" for i in range(len(items))]
+    colors = [BLUE if i == len(items) - 1 else "#9ca3af" for i in range(len(items))]
     fig = go.Figure(
         go.Bar(y=labels, x=values, orientation="h", marker=dict(color=colors),
                text=[f"{v:.0f}%" for v in values], textposition="outside", cliponaxis=False,

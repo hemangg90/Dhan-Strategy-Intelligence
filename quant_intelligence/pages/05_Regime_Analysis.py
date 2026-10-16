@@ -23,7 +23,7 @@ if output is None:
 
 st.subheader(f"Current regime: {output.regime_label} ({output.regime_confidence*100:.0f}% confidence)")
 fig = go.Figure(go.Bar(x=list(output.regime_probabilities.keys()), y=list(output.regime_probabilities.values())))
-fig.update_layout(template="plotly_dark", height=350, margin=dict(l=20, r=20, t=30, b=20), yaxis_title="Probability")
+fig.update_layout(template="plotly_white", height=350, margin=dict(l=20, r=20, t=30, b=20), yaxis_title="Probability")
 st.plotly_chart(fig, width="stretch")
 
 st.divider()
@@ -42,7 +42,7 @@ fig2 = go.Figure()
 for regime in hist_df["regime"].unique():
     sub = hist_df[hist_df["regime"] == regime]
     fig2.add_trace(go.Scatter(x=sub["timestamp"], y=sub["confidence"], mode="markers", name=regime))
-fig2.update_layout(template="plotly_dark", height=400, margin=dict(l=20, r=20, t=30, b=20), yaxis_title="Classifier confidence")
+fig2.update_layout(template="plotly_white", height=400, margin=dict(l=20, r=20, t=30, b=20), yaxis_title="Classifier confidence")
 st.plotly_chart(fig2, width="stretch")
 
 st.subheader("Regime frequency")
