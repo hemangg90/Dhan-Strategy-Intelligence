@@ -1,0 +1,6 @@
+-r requirements.txt
+# Development and test only (not needed to run the application)
+hypothesis>=6.100
+# fastapi.testclient (used by the website tests) needs an HTTP client: older Starlette wants httpx, newer wants httpx2.
+httpx>=0.27
+httpx2

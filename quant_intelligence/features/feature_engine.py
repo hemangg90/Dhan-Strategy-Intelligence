@@ -126,7 +126,10 @@ def compute_features(df: pd.DataFrame, profile: MarketProfile = NSE) -> pd.DataF
     )
 
     ret1 = out["return_1"]
-    realized_vol_20 = ret1.rolling(20, min_periods=20).std() * np.sqrt(252 * profile.session_minutes / 5)  # 5-min bars/session (NSE: 75)
+    # Annualise by the number of bars in a year: 252 sessions x (session length / bar length). The bar length is read from
+    # the data (it used to be hard-coded to 5 minutes, which mis-scales any other timeframe).
+    bars_per_year = 252 * profile.session_minutes / infer_bar_minutes(df["timestamp"])
+    realized_vol_20 = ret1.rolling(20, min_periods=20).std() * np.sqrt(bars_per_year)
     out["realized_vol_20"] = realized_vol_20
     out["vol_expansion"] = realized_vol_20 / realized_vol_20.rolling(100, min_periods=20).mean()
 
@@ -257,7 +260,19 @@ def _rsi(close: pd.Series, period: int) -> pd.Series:
     avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     rsi = 100 - (100 / (1 + rs))
-    return rsi.where(avg_loss != 0, 100.0)
+    rsi = rsi.where(avg_loss != 0, 100.0)  # only gains: RSI is 100
+    # No movement at all (0 gains and 0 losses) is UNDEFINED, not "maximally overbought": returning 100 there would
+    # make a flat or illiquid stretch look like a mean-reversion SHORT signal.
+    return rsi.where(~((avg_loss == 0) & (avg_gain == 0)), np.nan)
+
+
+def infer_bar_minutes(timestamps: pd.Series, default: float = 5.0) -> float:
+    """Median spacing, in minutes, between consecutive bars of the same session (overnight gaps excluded)."""
+    ts = pd.to_datetime(timestamps)
+    gaps = ts.diff().dt.total_seconds() / 60.0
+    intraday = gaps[(ts.dt.date == ts.shift(1).dt.date) & (gaps > 0)]
+    minutes = float(intraday.median()) if len(intraday) else default
+    return minutes if np.isfinite(minutes) and minutes > 0 else default
 
 
 def _supertrend(high: pd.Series, low: pd.Series, close: pd.Series, atr_period: int, multiplier: float):

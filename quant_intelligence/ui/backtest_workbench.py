@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from quant_intelligence.analytics.metrics import annualised_sharpe
 from quant_intelligence.config.settings import DATA_CACHE_DIR, SETTINGS
 
 LAB_EXCLUDED_SPLITS = ("RESEARCH",)  # RESEARCH rows are the live pipeline's internal evaluations, not lab runs
@@ -134,10 +135,7 @@ def daily_returns_pct(trades: pd.DataFrame, capital: float) -> pd.Series:
 
 def daily_sharpe(daily_pct: pd.Series, min_days: int = 10) -> float | None:
     """Annualised Sharpe of daily returns (risk-free 0). None with too few days or no variance."""
-    if len(daily_pct) < min_days:
-        return None
-    sd = float(daily_pct.std(ddof=1))
-    return float(daily_pct.mean() / sd * np.sqrt(252)) if sd > 0 else None
+    return annualised_sharpe(daily_pct.to_numpy(), 252, min_days)  # one shared, tested definition
 
 
 def benchmark_curve(instrument: str, start, end, capital: float, timeframe: str = "5min") -> pd.Series | None:

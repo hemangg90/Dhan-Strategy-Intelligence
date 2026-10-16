@@ -15,6 +15,7 @@ This client makes real network calls. It is never imported by anything in
 """
 from __future__ import annotations
 
+import random
 import time
 
 import requests
@@ -41,6 +42,16 @@ class DhanRateLimited(DhanApiError):
     def __init__(self, message: str, retry_in: float = 0.0):
         super().__init__(message, status_code=429)
         self.retry_in = retry_in
+
+
+TRANSIENT_STATUS = (500, 502, 503, 504)  # server-side hiccups worth retrying for READ calls
+_REQUEST_TIMEOUT_SEC = 15
+
+
+def backoff_delay(attempt: int, base: float, cap: float = 60.0) -> float:
+    """Exponential backoff with +/-20 % jitter: base x 2^(attempt-1), capped. Jitter stops many clients (or threads)
+    retrying in lockstep. `attempt` counts from 1."""
+    return min(cap, base * 2 ** (max(attempt, 1) - 1)) * random.uniform(0.8, 1.2)
 
 
 def _retry_after_seconds(resp) -> float | None:
@@ -118,13 +129,26 @@ class DhanApiClient:
                 )
             self._throttle(category)
             url = f"{self.base_url}{path}"
-            if method == "GET":
-                resp = requests.get(url, headers=self._headers(), timeout=15)
-            else:
-                resp = requests.post(url, headers=self._headers(), json=body, timeout=15)
+            try:
+                if method == "GET":
+                    resp = requests.get(url, headers=self._headers(), timeout=_REQUEST_TIMEOUT_SEC)
+                else:
+                    resp = requests.post(url, headers=self._headers(), json=body, timeout=_REQUEST_TIMEOUT_SEC)
+            except requests.RequestException as exc:
+                if not retry:
+                    # An order: the request may have reached Dhan, so the caller must see the raw transport error
+                    # and treat the outcome as UNKNOWN. It is never retried here.
+                    raise
+                if attempt < attempts:
+                    time.sleep(backoff_delay(attempt, 1.0, cap=10.0))
+                    continue
+                raise DhanApiError(f"Dhan did not respond to {path} after {attempts} attempt(s) ({type(exc).__name__})") from exc
             try:
                 data = self._handle(resp)
             except DhanApiError as e:
+                if e.status_code in TRANSIENT_STATUS and retry and attempt < attempts:
+                    time.sleep(backoff_delay(attempt, 1.0, cap=10.0))
+                    continue
                 if e.status_code == 401:
                     LIMITER.record_auth_failure(self.access_token)
                 if e.status_code == 429:
@@ -136,7 +160,7 @@ class DhanApiClient:
                             retry_in=LIMITER.cooldown_remaining(category),
                         ) from e
                     if retry and attempt < attempts:
-                        time.sleep(max(retry_after or 0.0, limits.backoff_sec * attempt))
+                        time.sleep(max(retry_after or 0.0, backoff_delay(attempt, limits.backoff_sec)))
                         continue
                 raise
             LIMITER.record_success(category)
@@ -153,6 +177,9 @@ class DhanApiClient:
         try:
             data = resp.json()
         except ValueError:
+            if resp.ok and (resp.text or "").strip():
+                # A success status with a body that is not JSON (an HTML error page, a proxy message): not "no data".
+                raise DhanApiError(f"Dhan returned a non-JSON response (HTTP {resp.status_code})", status_code=resp.status_code)
             data = {}
         if not resp.ok:
             message = data.get("remarks") or data.get("message") or resp.text or f"HTTP {resp.status_code}"

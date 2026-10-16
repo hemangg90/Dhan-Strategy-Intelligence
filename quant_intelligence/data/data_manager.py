@@ -83,8 +83,10 @@ def _replace_with_retry(src: Path, dst: Path, attempts: int = 12) -> None:
 def _write_cache(df: pd.DataFrame, path: Path) -> None:
     """Atomic: write beside the target, then rename over it, so a reader never sees a partial file."""
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    stamped = df.copy(deep=False)
+    stamped.attrs = {**df.attrs, "identity": path.stem}  # e.g. "NIFTY_5min": the file says what it holds
     try:
-        df.to_parquet(tmp, index=False)
+        stamped.to_parquet(tmp, index=False)
         _replace_with_retry(tmp, path)
     finally:
         if tmp.exists():
@@ -102,6 +104,11 @@ def _read_cache(path: Path) -> pd.DataFrame | None:
                 if attempt == 8:
                     raise
                 time.sleep(0.02 * attempt)
+        identity = cached.attrs.get("identity")
+        if identity is not None and identity != path.stem:
+            # A copied or renamed file: its contents belong to another instrument/timeframe. Never use it as this one.
+            log_event("data_manager", f"Cache file {path.name} holds {identity}, not {path.stem}: ignored", level="ERROR")
+            return None
         cached["timestamp"] = pd.to_datetime(cached["timestamp"])
         return cached
     except Exception as e:

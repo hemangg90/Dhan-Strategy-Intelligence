@@ -327,6 +327,19 @@ def save_report(report_date: dt.date, scope: str, report: dict) -> None:
             row.content_json, row.content_markdown, row.generated_at = report["content_json"], report["content_markdown"], utcnow()
 
 
+def is_complete(content_json) -> bool:
+    """Whether a stored report has every summary field the current page reads. Stored reports outlive code versions, so
+    one saved by an older version (or a minimal fixture) may lack fields added since; displaying it would crash the page."""
+    try:
+        import pandas as pd
+
+        summary = content_json["summary"]
+        needed = set(perf.summarise(pd.DataFrame())) - {"avg_held"}
+        return needed <= set(summary["today"]) and needed <= set(summary["cumulative"])
+    except Exception:
+        return False
+
+
 def load_report(report_date: dt.date, scope: str = "ALL") -> dict | None:
     from quant_intelligence.database.db import get_session
     from quant_intelligence.database.models import DailyReport

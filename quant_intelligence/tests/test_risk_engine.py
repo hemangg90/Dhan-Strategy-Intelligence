@@ -157,3 +157,59 @@ def test_every_veto_has_a_reason():
     ]:
         decision = evaluate_trade(acct, trade)
         assert decision.reason and len(decision.reason) > 0
+
+
+# ----------------------------------------------------------------- fail-closed behaviour
+import numpy as np
+
+
+def test_an_exception_while_evaluating_is_a_veto_not_an_approval(monkeypatch):
+    from quant_intelligence.risk import risk_engine
+
+    def boom(account):
+        raise RuntimeError("simulated failure inside a check")
+
+    monkeypatch.setattr(risk_engine, "risk_multiplier", boom)
+    decision = evaluate_trade(_account(), _trade(), now=NOW)
+    assert not decision.approved and "Risk evaluation failed" in decision.reason and "RuntimeError" in decision.reason
+    assert decision.decision_id.startswith("RISK-")
+    assert risk_engine.consume_approval(decision.decision_id) is False  # nothing downstream can spend a veto
+
+
+def test_an_approval_that_cannot_be_audited_is_not_an_approval(monkeypatch):
+    from quant_intelligence.database import db
+    from quant_intelligence.risk import risk_engine
+
+    def broken_session():
+        raise OSError("disk full")
+
+    monkeypatch.setattr(db, "get_session", broken_session)
+    decision = evaluate_trade(_account(), _trade(), now=NOW)
+    assert not decision.approved and "audit" in decision.reason.lower()
+    assert risk_engine.consume_approval(decision.decision_id) is False
+
+
+def test_numpy_inputs_do_not_break_the_audit_row_or_the_approval():
+    """Real callers pass numpy floats (e.g. relative volume from pandas); the audit JSON must still serialise."""
+    decision = evaluate_trade(_account(), _trade(relative_volume=np.float64(1.2), quantity=np.int64(50)), now=NOW)
+    assert decision.approved
+
+
+@pytest.mark.parametrize("overrides", [
+    dict(equity=float("nan")), dict(equity=0.0), dict(equity=-5.0), dict(equity=float("inf")),
+    dict(peak_equity=float("nan")), dict(daily_pnl=float("nan")), dict(total_exposure=float("inf")),
+    dict(open_positions_count=-1), dict(trades_today=2.5),
+])
+def test_an_invalid_account_state_is_never_approved(overrides):
+    decision = evaluate_trade(_account(**overrides), _trade(), now=NOW)
+    assert not decision.approved and decision.reason.startswith("Invalid account state")
+
+
+def test_a_rejected_trade_cannot_obtain_an_approval_to_execute():
+    from quant_intelligence.risk.risk_engine import consume_approval
+
+    vetoed = evaluate_trade(_account(kill_switch_engaged=True), _trade(), now=NOW)
+    assert consume_approval(vetoed.decision_id) is False
+    approved = evaluate_trade(_account(), _trade(), now=NOW)
+    assert approved.approved and consume_approval(approved.decision_id) is True
+    assert consume_approval(approved.decision_id) is False  # single use

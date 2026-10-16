@@ -135,7 +135,7 @@ def daily_series(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame({"trades": g.size(), "wins": g["net_pnl"].apply(lambda s: int((s > 0).sum())), "net_pnl": g["net_pnl"].sum()})
     out = out.sort_index().reset_index()
     out["cumulative"] = out["net_pnl"].cumsum()
-    out["drawdown"] = out["cumulative"] - out["cumulative"].cummax()
+    out["drawdown"] = out["cumulative"] - np.maximum(out["cumulative"].cummax(), 0.0)  # the start (0) is a peak
     return out[cols]
 
 

@@ -48,6 +48,13 @@ class OrderAck:
     fill_price: float | None = None
     timestamp: dt.datetime | None = None
 
+    @property
+    def state(self):
+        """The normalised lifecycle state (see brokers/order_state.py). Unrecognised statuses are SUBMISSION_UNKNOWN."""
+        from quant_intelligence.brokers.order_state import from_broker_status
+
+        return from_broker_status(self.status)
+
 
 class BaseBroker(abc.ABC):
     mode: str = "PAPER"

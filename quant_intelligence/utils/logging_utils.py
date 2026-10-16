@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -17,6 +18,20 @@ from pathlib import Path
 from quant_intelligence.config.settings import LOGS_DIR
 
 _LOGGER_NAME = "quant_intelligence"
+
+
+_JWT = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}")
+_SECRET_FIELD = re.compile(
+    r'(?i)("?(?:access[-_ ]?token|api[-_ ]?key|secret|password|passwd|totp[-_ ]?secret|authorization|dhan_pin|pin)"?\s*[:=]\s*"?)'
+    r'((?:Bearer\s+)?[^",\s}\]]+)'
+)
+
+
+def redact(text: str) -> str:
+    """Remove credential-looking content (JWTs, and the value of fields named token / secret / password / PIN ...) from
+    text that is about to be logged or shown. A last line of defence: callers should not pass secrets in the first place."""
+    text = _JWT.sub("[jwt-redacted]", text)
+    return _SECRET_FIELD.sub(lambda m: m.group(1) + "[redacted]", text)
 
 
 def new_decision_id(prefix: str = "DEC") -> str:
@@ -49,7 +64,7 @@ def get_logger() -> logging.Logger:
 def log_event(component: str, message: str, level: str = "INFO", **details) -> None:
     """Log a structured event to file/console AND persist to system_events table."""
     logger = get_logger().getChild(component)
-    payload = json.dumps({"message": message, "details": details}, default=str)
+    payload = redact(json.dumps({"message": message, "details": details}, default=str))
     getattr(logger, level.lower(), logger.info)(payload)
 
     try:
@@ -61,8 +76,8 @@ def log_event(component: str, message: str, level: str = "INFO", **details) -> N
                 SystemEvent(
                     component=component,
                     level=level,
-                    message=message,
-                    details=details or None,
+                    message=redact(message),
+                    details=json.loads(redact(json.dumps(details, default=str))) if details else None,
                 )
             )
     except Exception:

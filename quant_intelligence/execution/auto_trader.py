@@ -11,6 +11,7 @@ check (risk engine veto, mandatory-stop-on-SELL) applies identically.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Callable
 
@@ -52,6 +53,12 @@ class AutoCycleResult:
     tag: str | None = None  # "TIE-BREAK" when the trade came from a tied ranking
 
 
+def _sizable_inputs(account: AccountState, entry_price, stop_price, lot_size) -> bool:
+    """Equity and both prices finite numbers, lot size a positive whole number."""
+    numbers_ok = all(isinstance(x, (int, float)) and math.isfinite(x) for x in (account.equity, entry_price, stop_price))
+    return numbers_ok and isinstance(lot_size, int) and lot_size >= 1
+
+
 def size_position(
     account: AccountState, entry_price: float, stop_price: float, lot_size: int = 1, size_factor: float = 1.0
 ) -> int:
@@ -64,6 +71,8 @@ def size_position(
     The budget is scaled by `risk_multiplier` (drawdown / daily loss / losing streak), exactly as the
     risk engine's check is, so size shrinks in a bad stretch.
     """
+    if not _sizable_inputs(account, entry_price, stop_price, lot_size):
+        return 0  # an invalid input can never become a quantity (NaN would otherwise crash `int()` below)
     stop_distance = abs(entry_price - stop_price)
     if stop_distance <= 0 or account.equity <= 0:
         return 0
@@ -92,6 +101,8 @@ def risk_budget(account: AccountState) -> tuple[float, float, str]:
 def _zero_size_reason(account: AccountState, entry_price: float | None = None, stop_price: float | None = None,
                       lot_size: int = 1) -> str:
     """Why the quantity came out zero - specific when the trade's prices are known."""
+    if not _sizable_inputs(account, entry_price if entry_price is not None else 1.0, stop_price if stop_price is not None else 0.5, lot_size):
+        return f"{NO_SIZE_PREFIX} an input to sizing is not a valid number (account equity, entry, stop or lot size) - not traded."
     budget, multiplier, why = risk_budget(account)
     cut = f" (budget cut to {multiplier:.0%}: {why})" if multiplier < 1 else ""
     if entry_price is not None and stop_price is not None:

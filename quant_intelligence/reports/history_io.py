@@ -33,7 +33,7 @@ def _ts(value):
 
 
 def _booked_pnl(r: dict):
-    """The broker's booked (gross) premium P&L - what `Position.net_pnl` stores."""
+    """The GROSS booked premium P&L of an exported row (the `gross_pnl` column, or net + charges)."""
     for key in ("gross_pnl",):
         if _clean(r.get(key)) is not None:
             return float(r[key])
@@ -41,6 +41,19 @@ def _booked_pnl(r: dict):
     if net is None:
         return None
     return float(net) + float(_clean(r.get("charges")) or 0.0)
+
+
+def _pnl_fields(r: dict) -> dict:
+    """Position P&L columns for an imported row, restored exactly as they were stored. Only when the file says the charges
+    were BOOKED (`charges_booked`) is the row stored in the current convention (gross, costs, net = gross - costs);
+    otherwise it is a legacy row: `net_pnl` holds the gross and `costs` stays NULL (the charges in the file were only
+    estimates). Files written before this column existed therefore restore as legacy rows, which is what they were."""
+    gross = _booked_pnl(r)
+    charges = _clean(r.get("charges"))
+    booked = str(_clean(r.get("charges_booked"))).strip().lower() in ("true", "1", "1.0")
+    if gross is not None and charges is not None and booked:
+        return {"gross_pnl": gross, "costs": float(charges), "net_pnl": gross - float(charges), "costs_model": "IMPORTED"}
+    return {"gross_pnl": None, "costs": None, "net_pnl": gross, "costs_model": None}
 
 
 def rows_from_frame(df: pd.DataFrame) -> tuple[list[dict], list[tuple[int, str]]]:
@@ -71,7 +84,7 @@ def rows_from_frame(df: pd.DataFrame) -> tuple[list[dict], list[tuple[int, str]]
             "stop_price": r.get("stop", r.get("stop_price")), "target_price": r.get("target", r.get("target_price")),
             "status": "STALE" if status == "OPEN" else status,
             "opened_at": _ts(r.get("opened_at")), "closed_at": _ts(r.get("closed_at")),
-            "exit_price": r.get("exit_price"), "net_pnl": _booked_pnl(r),
+            "exit_price": r.get("exit_price"), **_pnl_fields(r),
             "exit_reason": "STALE_ON_RESTART" if status == "OPEN" else r.get("exit_reason"),
             "mode": "PAPER", "security_id": None if r.get("security_id") is None else str(r.get("security_id")),
             "option_type": option_type, "strike": r.get("strike"), "expiry": None if r.get("expiry") is None else str(r.get("expiry")),

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from quant_intelligence.analytics.metrics import annualised_sharpe, max_drawdown, payoff_ratio, profit_factor
 from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.strategies.base_strategy import BaseStrategy, TradeResult, setup_geometry_ok
 
@@ -40,6 +41,26 @@ class BacktestResult:
 
 
 MIN_PREMIUM = 0.05  # an option cannot trade below one tick
+
+
+def execution_conventions(premium_model_used: bool) -> dict:
+    """How this backtest turns signals into trades and money. Stored with every run so a result is never read without it.
+    Nothing here is an observed fill: signals come from UNDERLYING prices and the option economics are modelled."""
+    return {
+        "basis": "UNDERLYING_PRICE_SIGNALS_WITH_MODELLED_OPTION_ECONOMICS",
+        "signal_timing": "signal on a completed bar; entry assumed at that bar's close (no latency, no next-bar fill)",
+        "same_bar_stop_and_target": "stop assumed to be hit first (conservative; OHLC cannot order events inside a bar)",
+        "gap_through_stop": "filled at the worse of the stop and the bar open",
+        "gap_through_target": "filled at the target (a better open is ignored)",
+        "max_holding": "time exit at the close of the last allowed bar",
+        "open_at_data_end": "excluded from statistics (no final outcome)",
+        "invalid_setup_geometry": "skipped (stop or target on the wrong side of the entry)",
+        "overlap": "one open trade per strategy at a time",
+        "option_premium": ("reconstructed with a Black-Scholes style model" if premium_model_used
+                           else "assumed: a fixed percentage of the underlying price, constant delta"),
+        "costs": "modelled brokerage, STT, exchange, SEBI, stamp duty, GST and slippage on that assumed premium",
+        "not_observed": "no historical option prices or fills are used; results are not evidence of options profitability",
+    }
 
 
 def market_for(instrument: str | None) -> str:
@@ -72,7 +93,8 @@ def _apply_costs(
     else:
         entry_premium = max(c.assumed_option_premium_pct / 100.0 * entry_price, MIN_PREMIUM)
         exit_premium = max(entry_premium + delta * trade.gross_pnl, MIN_PREMIUM)
-        option_pnl_per_unit = delta * trade.gross_pnl
+        # P&L follows the (floored) premiums, so a bought option can never lose more than its entry premium.
+        option_pnl_per_unit = exit_premium - entry_premium
     buy_turnover = entry_premium * quantity
     sell_turnover = exit_premium * quantity
     turnover = buy_turnover + sell_turnover
@@ -109,8 +131,7 @@ def max_drawdown_in_r(net_r: np.ndarray) -> float | None:
     """Worst peak-to-trough fall of cumulative net R (negative number; None with no trades)."""
     if len(net_r) == 0:
         return None
-    equity = np.cumsum(net_r)
-    return float((equity - np.maximum.accumulate(equity)).min())
+    return max_drawdown(np.cumsum(net_r))  # measured from a starting equity of 0
 
 
 def run_backtest(
@@ -160,6 +181,7 @@ def run_backtest(
     market = market_for(instrument)
     run.metrics = _compute_run_metrics(resolved, quantity, market)
     run.metrics["n_unresolved_excluded"] = len(trades) - len(resolved)
+    run.metrics["conventions"] = execution_conventions(premium_model is not None)
     run.metrics["n_invalid_setups_skipped"] = invalid_setups
 
     if persist:
@@ -197,8 +219,9 @@ def daily_sharpe_sortino(trades: list[TradeResult], net_rs: np.ndarray) -> tuple
     days = pd.Series(net_rs).groupby(pd.to_datetime([t.exit_timestamp for t in trades]).normalize()).sum()
     if len(days) < MIN_DAYS_FOR_SHARPE:
         return nan, nan
-    mean, sd = float(days.mean()), float(days.std(ddof=1))
-    sharpe = mean / sd * np.sqrt(252) if sd > 0 else nan
+    mean = float(days.mean())
+    shared = annualised_sharpe(days.to_numpy(), 252, MIN_DAYS_FOR_SHARPE)
+    sharpe = nan if shared is None else shared
     downside_dev = float(np.sqrt(np.mean(np.minimum(days.to_numpy(), 0.0) ** 2)))
     sortino = mean / downside_dev * np.sqrt(252) if downside_dev > 0 else nan
     return float(sharpe), float(sortino)
@@ -217,15 +240,13 @@ def _compute_run_metrics(trades: list[TradeResult], quantity: int, market: str =
 
     wins = r_multiples > 0
     win_rate = float(wins.mean())
-    avg_win = r_multiples[wins].mean() if wins.any() else 0.0
-    avg_loss = r_multiples[~wins].mean() if (~wins).any() else 0.0
-    payoff_ratio = float(abs(avg_win / avg_loss)) if avg_loss != 0 else float("nan")
+    # Payoff = avg win / |avg loss| over genuine winners and losers (a scratch at exactly 0R is neither).
+    payoff = payoff_ratio(r_multiples)
+    payoff_value = float("nan") if payoff is None else payoff
 
     net_rs = np.array([net_r_multiple(t, quantity, market) for t in trades])
     equity_curve = np.cumsum(net_pnls)
-    running_max = np.maximum.accumulate(equity_curve) if len(equity_curve) else np.array([0])
-    drawdown = equity_curve - running_max
-    max_drawdown = float(drawdown.min()) if len(drawdown) else 0.0
+    max_dd = max_drawdown(equity_curve)  # from the starting equity, so early losses count
 
     sharpe, sortino = daily_sharpe_sortino(trades, net_rs)
 
@@ -236,10 +257,11 @@ def _compute_run_metrics(trades: list[TradeResult], quantity: int, market: str =
         "expected_r": float(r_multiples.mean()),
         "median_r": float(np.median(r_multiples)),
         "avg_r": float(r_multiples.mean()),
-        "payoff_ratio": payoff_ratio,
+        "payoff_ratio": payoff_value,
+        "profit_factor": profit_factor(net_pnls),  # net of costs; None when there is no losing trade
         "sharpe": sharpe,
         "sortino": sortino,
-        "max_drawdown": max_drawdown,  # rupees (display)
+        "max_drawdown": max_dd,  # rupees (display)
         "max_drawdown_r": max_drawdown_in_r(net_rs),  # R units (used by the ranker)
         "net_expected_r": float(net_rs.mean()),
         "avg_mfe": float(np.mean([t.mfe for t in trades])),

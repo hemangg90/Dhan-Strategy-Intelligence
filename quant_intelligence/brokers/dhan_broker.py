@@ -22,6 +22,7 @@ import requests
 
 from quant_intelligence.brokers.base_broker import BaseBroker, OrderAck, OrderRequest
 from quant_intelligence.brokers.dhan_api_client import DhanApiClient, DhanApiError
+from quant_intelligence.brokers.order_state import OrderState, from_broker_status
 from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.risk.risk_engine import consume_approval
 from quant_intelligence.utils.logging_utils import log_event
@@ -73,8 +74,8 @@ class DhanBroker(BaseBroker):
 
         # Defence in depth: the order must carry a risk-engine approval issued moments ago, usable once. Every caller
         # already runs the risk engine; this makes skipping it (or replaying an approval) impossible by construction.
-        if not consume_approval(order.decision_id):
-            reason = "No valid, unused risk-engine approval for this order (missing, expired or already used)"
+        if not consume_approval(order.decision_id, order=order):
+            reason = "No valid, unused risk-engine approval for this exact order (missing, expired, already used, or the order differs from the approved trade)"
             log_event("dhan_broker", f"BLOCKED live order attempt: {reason}", level="ERROR", decision_id=order.decision_id)
             return OrderAck(order_id="BLOCKED", status="REJECTED", reject_reason=reason)
 
@@ -109,8 +110,15 @@ class DhanBroker(BaseBroker):
             log_event("dhan_broker", reason, level="ERROR", decision_id=order.decision_id)
             return OrderAck(order_id="UNKNOWN", status="UNKNOWN", reject_reason=reason)
 
-        order_id = response.get("orderId", "UNKNOWN")
+        order_id = response.get("orderId")
         status = response.get("orderStatus", "PENDING")
+        if not order_id or from_broker_status(status) is OrderState.SUBMISSION_UNKNOWN:
+            # Dhan answered, but not with an order id and a status we recognise: we cannot say what happened to the order.
+            self.unreconciled_order = order.decision_id or "unknown"
+            reason = (f"Dhan's reply carried no usable order id or status ({status!r}): the order's outcome is UNKNOWN. "
+                      "Check Dhan's order book; no further live order will be sent.")
+            log_event("dhan_broker", reason, level="ERROR", decision_id=order.decision_id)
+            return OrderAck(order_id=str(order_id or "UNKNOWN"), status="UNKNOWN", reject_reason=reason)
         log_event(
             "dhan_broker",
             f"LIVE order placed: {transaction_type} {order.quantity} {order.instrument} "

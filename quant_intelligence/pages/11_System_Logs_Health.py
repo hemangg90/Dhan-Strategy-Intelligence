@@ -48,6 +48,26 @@ if SETTINGS.is_live_mode and not SETTINGS.live_mode_fully_authorized:
     )
 
 st.divider()
+st.subheader("Diagnostics")
+st.caption("OK / WARN / FAIL = the check ran. NOT_TESTED = nothing has been checked, so nothing is claimed. "
+           "No credential is ever shown, only token state and expiry.")
+from quant_intelligence import diagnostics  # noqa: E402
+
+_test_api = st.button("Test Dhan connection now", help="Makes one real, read-only request to Dhan.")
+_checks = diagnostics.collect(output=st.session_state.get("pipeline_output"),
+                              live_broker=st.session_state.get("dhan_broker"), test_api=_test_api)
+_bad = [c for c in _checks if c.status in (diagnostics.FAIL, diagnostics.WARN)]
+st.dataframe([{"Check": c.name, "Status": c.status, "Detail": c.detail} for c in _checks], width="stretch", hide_index=True)
+if any(c.status == diagnostics.FAIL for c in _bad):
+    st.error("At least one check failed: see the table. Trading decisions that depend on it are blocked.")
+_errors = diagnostics.recent_errors(10)
+with st.expander(f"Recent warnings and errors ({len(_errors)})"):
+    if _errors:
+        st.dataframe(_errors, width="stretch", hide_index=True)
+    else:
+        st.caption("None in the recent log.")
+
+st.divider()
 st.subheader("Dhan API usage")
 snap = LIMITER.snapshot()
 if snap["auth_block_remaining"] > 0:

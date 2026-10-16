@@ -269,7 +269,13 @@ class Position(Base):
     opened_at = Column(DateTime)
     closed_at = Column(DateTime)
     exit_price = Column(Float)
+    # P&L convention. When `costs` is set (rows closed by the current paper broker): `gross_pnl` is the price P&L,
+    # `costs` the brokerage/taxes/exit slippage, and `net_pnl` = gross_pnl - costs. When `costs` is NULL (legacy rows
+    # and older exports) `net_pnl` holds the GROSS booked P&L and charges are estimated for display.
     net_pnl = Column(Float)
+    gross_pnl = Column(Float)
+    costs = Column(Float)
+    costs_model = Column(String(24))  # OPTION_PREMIUM / BROKERAGE_ONLY
     exit_reason = Column(String(32))  # STOP / TARGET / EOD_SQUARE_OFF / MANUAL / STALE_ON_RESTART
     mode = Column(String(8))
     underlying = Column(String(32))

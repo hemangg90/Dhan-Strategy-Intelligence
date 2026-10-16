@@ -29,6 +29,8 @@ shrink in a bad stretch instead of staying full until the hard drawdown veto sto
 from __future__ import annotations
 
 import datetime as dt
+import json
+import math
 import numbers
 import threading
 import time
@@ -91,26 +93,61 @@ MAX_SLIPPAGE_STOP_FRACTION = 0.5  # half-spread (expected slippage) vs distance 
 # Approvals issued by `evaluate_trade`, so a broker can insist that an order was actually vetted. A live order must
 # present a decision id that this process approved moments ago; each approval can be spent once (no replays).
 APPROVAL_TTL_SEC = 120.0
-_approvals: dict[str, float] = {}
+_approvals: dict[str, tuple[float, dict | None]] = {}
 _approvals_lock = threading.Lock()
 
 
-def _note_approval(decision_id: str) -> None:
+def _snapshot(trade: ProposedTrade) -> dict:
+    return {"instrument": (trade.instrument or "").upper(), "direction": trade.direction, "quantity": int(trade.quantity),
+            "entry": float(trade.entry_price), "stop": float(trade.stop_price), "target": float(trade.target_price)}
+
+
+def _note_approval(decision_id: str, snapshot: dict | None = None) -> None:
     with _approvals_lock:
         now = time.monotonic()
-        for k in [k for k, t in _approvals.items() if now - t > APPROVAL_TTL_SEC]:
+        for k in [k for k, (t, _) in _approvals.items() if now - t > APPROVAL_TTL_SEC]:
             del _approvals[k]
-        _approvals[decision_id] = now
+        _approvals[decision_id] = (now, snapshot)
 
 
-def consume_approval(decision_id: str | None, max_age_sec: float = APPROVAL_TTL_SEC) -> bool:
-    """True once for a decision id that `evaluate_trade` approved within `max_age_sec`; False for anything else
-    (unknown id, expired, already used, or no id), so a missing approval fails closed."""
+def _order_matches(snapshot: dict, order) -> str | None:
+    """None if the submitted order is the trade that was approved; otherwise what differs."""
+    def same(a, b):
+        return a is not None and b is not None and math.isclose(float(a), float(b), rel_tol=1e-9, abs_tol=1e-6)
+
+    if (getattr(order, "instrument", "") or "").upper() != snapshot["instrument"]:
+        return "instrument"
+    if getattr(order, "direction", None) != snapshot["direction"]:
+        return "direction"
+    if int(getattr(order, "quantity", -1)) != snapshot["quantity"]:
+        return "quantity"
+    if not same(getattr(order, "price", None), snapshot["entry"]):
+        return "price"
+    for field, key in (("stop_price", "stop"), ("target_price", "target")):
+        value = getattr(order, field, None)
+        if value is not None and not same(value, snapshot[key]):
+            return field
+    return None
+
+
+def consume_approval(decision_id: str | None, order=None, max_age_sec: float = APPROVAL_TTL_SEC) -> bool:
+    """True once for a decision id that `evaluate_trade` approved within `max_age_sec`, and (when `order` is given) only
+    if the order is the approved trade: same instrument, direction, quantity and prices. False for anything else
+    (unknown id, expired, already used, no id, or a different order), so a missing or mismatched approval fails closed.
+    An approval is spent by the attempt even when the order does not match."""
     if not decision_id:
         return False
     with _approvals_lock:
-        issued = _approvals.pop(decision_id, None)
-    return issued is not None and time.monotonic() - issued <= max_age_sec
+        entry = _approvals.pop(decision_id, None)
+    if entry is None or time.monotonic() - entry[0] > max_age_sec:
+        return False
+    snapshot = entry[1]
+    if order is not None and snapshot is not None:
+        difference = _order_matches(snapshot, order)
+        if difference:
+            log_event("risk_engine", f"Order differs from the approved trade ({difference}): rejected", level="ERROR", decision_id=decision_id)
+            return False
+    return True
 
 
 @dataclass
@@ -167,11 +204,44 @@ def risk_multiplier(account: AccountState) -> tuple[float, str]:
     return min(factors, key=lambda f: f[0])
 
 
+def _invalid_account_reason(account: AccountState) -> str | None:
+    """Mandatory account inputs must be finite and sensible; otherwise no limit can be checked and nothing is approved."""
+    for name in ("equity", "peak_equity", "daily_pnl", "total_exposure"):
+        value = getattr(account, name)
+        if not (isinstance(value, numbers.Real) and math.isfinite(float(value))):
+            return f"account {name} {value!r} is not a finite number"
+    if account.equity <= 0:
+        return f"account equity {account.equity:g} is not positive"
+    if account.peak_equity < 0:
+        return "account peak equity is negative"
+    for name in ("open_positions_count", "trades_today"):
+        value = getattr(account, name)
+        if not isinstance(value, numbers.Integral) or value < 0:
+            return f"account {name} {value!r} is not a non-negative whole number"
+    return None
+
+
 def evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime | None = None) -> RiskDecision:
+    """Approve or veto a proposed trade. Fails closed: any unexpected error while evaluating is a veto, and an
+    approval is only returned once its audit record has been persisted."""
+    try:
+        return _evaluate_trade(account, trade, now)
+    except Exception as exc:
+        decision_id = new_decision_id("RISK")
+        log_event("risk_engine", f"Risk evaluation raised {type(exc).__name__}: trade blocked", level="ERROR", decision_id=decision_id)
+        return _veto(decision_id, f"Risk evaluation failed ({type(exc).__name__}): trade blocked", {"evaluation_error": True})
+
+
+def _evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime | None = None) -> RiskDecision:
     decision_id = new_decision_id("RISK")
     checks: dict[str, bool] = {}
     limits = SETTINGS.risk
     now = now or now_ist()
+
+    invalid_account = _invalid_account_reason(account)
+    checks["account_state_valid"] = invalid_account is None
+    if invalid_account:
+        return _veto(decision_id, f"Invalid account state: {invalid_account}", checks)
 
     if account.kill_switch_engaged:
         return _veto(decision_id, "Emergency kill switch is engaged", checks)
@@ -316,9 +386,11 @@ def evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime
     if not checks["liquidity_sufficient"]:
         return _veto(decision_id, f"Relative volume {trade.relative_volume:.2f} below minimum liquidity threshold {min_liquidity}", checks)
 
+    if not _persist_risk_event(decision_id, "APPROVED", "All risk checks passed", checks):
+        # An approval that cannot be audited is not an approval.
+        return _veto(decision_id, "Risk audit trail unavailable: the approval could not be recorded, trade blocked", checks)
     log_event("risk_engine", "Trade approved by risk engine", level="INFO", decision_id=decision_id, strategy=trade.strategy_name)
-    _persist_risk_event(decision_id, "APPROVED", "All risk checks passed", checks)
-    _note_approval(decision_id)
+    _note_approval(decision_id, _snapshot(trade))
     return RiskDecision(decision_id, True, "All risk checks passed", checks)
 
 
@@ -386,12 +458,26 @@ def _veto(decision_id: str, reason: str, checks: dict) -> RiskDecision:
     return RiskDecision(decision_id, False, reason, checks)
 
 
-def _persist_risk_event(decision_id: str, event_type: str, reason: str, details: dict) -> None:
+def _json_safe(details: dict) -> dict:
+    """Plain-Python copy of the check results: numpy booleans / floats (from numpy inputs) are not JSON serialisable,
+    and an unserialisable audit row would otherwise block an approval that is perfectly valid."""
+    def default(value):
+        if hasattr(value, "item"):
+            return value.item()
+        return str(value)
+
+    return json.loads(json.dumps(details, default=default))
+
+
+def _persist_risk_event(decision_id: str, event_type: str, reason: str, details: dict) -> bool:
+    """Write the audit row. Returns whether it was stored (a failure is logged, never silent)."""
     try:
         from quant_intelligence.database.db import get_session
         from quant_intelligence.database.models import RiskEvent
 
         with get_session() as session:
-            session.add(RiskEvent(decision_id=decision_id, event_type=event_type, reason=reason, details=details))
-    except Exception as exc:  # the verdict itself is unaffected, but a lost audit row must not be invisible
+            session.add(RiskEvent(decision_id=decision_id, event_type=event_type, reason=reason, details=_json_safe(details)))
+        return True
+    except Exception as exc:  # a veto stands without its row, but a lost audit row must not be invisible
         log_event("risk_engine", f"Could not persist risk event {decision_id}: {type(exc).__name__}", level="ERROR")
+        return False

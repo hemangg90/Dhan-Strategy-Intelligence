@@ -50,6 +50,12 @@ if c3.button("Generate / refresh this report now", key="rep_gen"):
     st.rerun()
 
 record = eod.load_report(chosen, scope)
+_older_version = record is not None and not eod.is_complete(record["content_json"])
+if _older_version:
+    # A report stored by an older version lacks fields this page needs: rebuild it from the trade records instead of crashing.
+    st.warning("The stored report for this day was saved by an older version and is incomplete, so it is rebuilt below from "
+               "the trade records. Press 'Generate / refresh this report now' to replace the stored copy.")
+    record = None
 preview = record is None
 if preview:
     with st.spinner("Building a preview..."):

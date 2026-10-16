@@ -2,8 +2,8 @@
 
 Live open positions with P&L, stop/target progress and a manual exit; today's trades; full trade
 history; order book; fills; and performance analytics. Numbers use Indian grouping; P&L is shown net of
-estimated charges at Dhan's brokerage and the statutory option rates (the paper broker itself books gross
-premium P&L - charges are itemised here, display only).
+charges at Dhan's brokerage and the statutory option rates. Positions closed by the current paper broker carry the
+charges it booked; older rows only stored a gross figure, so their charges are estimated here.
 """
 import datetime as dt
 import sys

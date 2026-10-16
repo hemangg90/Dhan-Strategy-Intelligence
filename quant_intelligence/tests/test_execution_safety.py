@@ -27,13 +27,18 @@ def _live_broker(monkeypatch):
 
 def _order(decision_id):
     return OrderRequest(strategy_name="Momentum", instrument="NIFTY", direction="LONG", quantity=65, price=50.0,
+                        stop_price=45.0, target_price=60.0,
                         decision_id=decision_id, security_id="777", exchange_segment="NSE_FNO", transaction_type="BUY")
 
 
-def _approved_decision():
+def _approved_decision(**overrides):
+    """Approve exactly the trade that `_order` submits (premium 50, stop 45, target 60, 65 units of NIFTY)."""
     acct = AccountState(equity=1_000_000, peak_equity=1_000_000, daily_pnl=0.0, open_positions_count=0, trades_today=0)
-    d = evaluate_trade(acct, ProposedTrade("Momentum", "LONG", 100.0, 99.0, 103.0, 50, relative_volume=1.0))
-    assert d.approved
+    fields = dict(strategy_name="Momentum", direction="LONG", entry_price=50.0, stop_price=45.0, target_price=60.0, quantity=65,
+                  relative_volume=1.0, instrument="NIFTY", long_premium=True)
+    fields.update(overrides)
+    d = evaluate_trade(acct, ProposedTrade(**fields))
+    assert d.approved, d.reason
     return d.decision_id
 
 
@@ -201,3 +206,25 @@ def test_missing_live_pnl_figures_fail_closed_instead_of_counting_as_zero():
     assert acct.daily_pnl_known is False
     decision = evaluate_trade(acct, _trade_for_risk())
     assert not decision.approved and "unavailable" in decision.reason and decision.checks["daily_pnl_known"] is False
+
+
+# ------------------------------------------------- the order must be the trade that was approved
+@pytest.mark.parametrize("field,value", [
+    ("instrument", "BANKNIFTY"), ("direction", "SHORT"), ("quantity", 130), ("price", 55.0),
+    ("stop_price", 40.0), ("target_price", 70.0),
+])
+def test_an_order_that_differs_from_the_approved_trade_is_rejected_and_the_approval_is_spent(monkeypatch, field, value):
+    broker = _live_broker(monkeypatch)
+    decision_id = _approved_decision()
+    order = _order(decision_id)
+    setattr(order, field, value)
+    ack = broker.place_order(order)
+    assert ack.status == "REJECTED" and "exact order" in ack.reject_reason
+    broker.client.place_order.assert_not_called()
+    assert broker.place_order(_order(decision_id)).status == "REJECTED"  # the genuine order cannot reuse the spent approval
+
+
+def test_the_exact_approved_order_is_sent(monkeypatch):
+    broker = _live_broker(monkeypatch)
+    assert broker.place_order(_order(_approved_decision())).status == "PENDING"
+    assert broker.client.place_order.call_count == 1

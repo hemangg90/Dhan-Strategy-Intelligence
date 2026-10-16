@@ -674,11 +674,18 @@ left open when the app slept (STALE) have no result and are reported separately.
 ## Testing
 
 ```bash
-python -m pytest -q          # 300+ tests, ~1 minute, no network
-python scripts/ui_smoke_test.py   # runs every page headlessly
+pip install -r requirements-dev.txt     # runtime packages + Hypothesis and the test HTTP client
+python -m pytest -q                     # 800+ tests, about 5-6 minutes, no network, no credentials, no orders
+python scripts/ui_smoke_test.py         # runs every page headlessly
+python scripts/demo_preflight.py        # pre-demo environment checks
 ```
+See `docs/TESTING.md` for the test groups, what each proves and does not prove, and environment notes (Windows long
+paths, memory).
 
-Tests cover the data-quality gate, timezone alignment, feature no-look-ahead, strategies, backtester,
+Tests include independent known-answer checks of the indicators, drawdown, costs and option-chain formulas, property-based
+tests, look-ahead (chronology) tests for features, strategies and the selector, failure injection (API timeouts, corrupt
+caches, failed writes, a pipeline outage on every page) and a deterministic end-to-end trade lifecycle.
+They also cover the data-quality gate, timezone alignment, feature no-look-ahead, strategies, backtester,
 analogues, ranking, the risk engine, the paper broker, option selection and the premium model, Dhan client
 request shapes/retry/caching (HTTP is mocked), capital accounting, the background engine (start/stop,
 failure isolation, market-hours and kill-switch behaviour), square-off and restart recovery. Tests use a

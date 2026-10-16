@@ -23,8 +23,10 @@ from dataclasses import dataclass
 from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.options.option_selector import OptionContract
 from quant_intelligence.strategies.base_strategy import Setup
+from quant_intelligence.utils.logging_utils import log_event
 
 MIN_PREMIUM_TICK = 0.05
+DEFAULT_DELTA_WHEN_MISSING = 0.5  # an assumption, not data: translate_setup logs it and flags the setup
 
 
 class PremiumSizingError(ValueError):
@@ -40,6 +42,7 @@ class PremiumSetup:
     stop_price: float
     target_price: float
     contract: OptionContract
+    delta_assumed: bool = False  # True when the contract had no delta and DEFAULT_DELTA_WHEN_MISSING was used
 
 
 def translate_setup(underlying_setup: Setup, contract: OptionContract) -> PremiumSetup:
@@ -51,7 +54,12 @@ def translate_setup(underlying_setup: Setup, contract: OptionContract) -> Premiu
         entry premium is REQUIRED here - `PremiumSizingError` if the delta-scaled stop
         would come out non-positive or absent.
     """
-    delta = abs(contract.delta) if contract.delta is not None else 0.5  # conservative default
+    delta_assumed = contract.delta is None
+    if delta_assumed:
+        # A default for missing market data. Behaviour is unchanged (owner decision pending), but it is never silent.
+        log_event("premium_model", f"No delta for {getattr(contract, 'trading_symbol', 'contract')}: assuming "
+                  f"{DEFAULT_DELTA_WHEN_MISSING} to scale the premium stop and target", level="WARNING")
+    delta = abs(contract.delta) if contract.delta is not None else DEFAULT_DELTA_WHEN_MISSING
     index_move_to_stop = abs(underlying_setup.entry_price - underlying_setup.stop_price)
     index_move_to_target = abs(underlying_setup.entry_price - underlying_setup.target_price)
 
@@ -80,6 +88,7 @@ def translate_setup(underlying_setup: Setup, contract: OptionContract) -> Premiu
         stop_price=stop,
         target_price=target,
         contract=contract,
+        delta_assumed=delta_assumed,
     )
 
 

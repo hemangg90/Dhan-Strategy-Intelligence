@@ -148,3 +148,13 @@ def test_setups_with_a_target_or_stop_on_the_wrong_side_are_not_simulated_as_tra
     res = run_backtest(_BadGeometry(), bars, feats, "NIFTY", split="TEST", persist=False)
     assert res.metrics["n_invalid_setups_skipped"] == 3
     assert res.metrics["n_trades"] == 1 and res.trades[0].exit_reason == "TARGET" and res.trades[0].r_multiple > 0
+
+
+def test_every_run_records_the_conventions_it_was_produced_under():
+    rows = [(100, 100, 100, 100)] + [(100.0, 100.4, 99.8, 100.2), (100.2, 101.8, 100.1, 101.6)] + [(101.6, 101.7, 101.5, 101.6)] * 80
+    bars = _bars(rows)
+    res = run_backtest(_BadGeometry(), bars, pd.DataFrame({"timestamp": bars["timestamp"]}), "NIFTY", split="TEST", persist=False)
+    c = res.metrics["conventions"]
+    assert c["basis"] == "UNDERLYING_PRICE_SIGNALS_WITH_MODELLED_OPTION_ECONOMICS"
+    assert "stop assumed to be hit first" in c["same_bar_stop_and_target"] and "worse" in c["gap_through_stop"]
+    assert "not evidence of options profitability" in c["not_observed"]

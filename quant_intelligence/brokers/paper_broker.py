@@ -42,6 +42,9 @@ class PaperBroker(BaseBroker):
 
         if order.quantity <= 0:
             return self._record(order, order_id, "REJECTED", "Quantity must be positive")
+        if order.decision_id and any(p.get("decision_id") == order.decision_id for p in self.positions.values()):
+            # One approved decision opens one position: a repeated submission (double click, retry, replay) is refused.
+            return self._record(order, order_id, "REJECTED", f"Duplicate order: decision {order.decision_id} already has a position")
         if not self.connected:
             return self._record(order, order_id, "REJECTED", "PaperBroker is disconnected (simulated)")
 

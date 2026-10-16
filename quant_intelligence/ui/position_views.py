@@ -10,6 +10,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+from quant_intelligence.analytics.metrics import max_drawdown
 from quant_intelligence.execution.charges import option_trade_charges
 from quant_intelligence.ui.format import contract_label
 from quant_intelligence.utils.market_profile import profile_for
@@ -18,7 +19,7 @@ from quant_intelligence.utils.timeutil import now_ist
 _COLUMNS = [
     "position_id", "instrument", "strategy", "contract", "side", "option_type", "strike", "expiry", "qty",
     "entry", "stop", "target", "status", "opened_at", "closed_at", "exit_price", "exit_reason", "security_id",
-    "market", "invested", "gross_pnl", "charges", "net_pnl", "return_pct", "held", "tag",
+    "market", "invested", "gross_pnl", "charges", "charges_booked", "net_pnl", "return_pct", "held", "tag",
     "order_id", "decision_id", "expected_r", "confidence", "regime",
 ]
 
@@ -33,9 +34,10 @@ def _get(row, key, default=None):
 def positions_frame(rows: Iterable, now: dt.datetime | None = None) -> pd.DataFrame:
     """One tidy frame from paper-broker dicts or ORM Position rows.
 
-    `gross_pnl` is the broker's booked premium P&L; `charges` are itemised at Dhan's rates on the actual
-    entry/exit premiums (display only); `net_pnl` = gross - charges. Open rows have no exit yet, so
-    these three are None until `with_live` prices them.
+    `gross_pnl` is the price P&L, `charges` the costs and `net_pnl` = gross - charges. Rows closed by the current
+    paper broker carry all three as booked (`costs` is set). Legacy rows stored only a gross figure in `net_pnl`;
+    their charges are estimated at Dhan's rates. Open rows have no exit yet, so these are None until `with_live`
+    prices them.
     """
     records = []
     for r in rows:
@@ -47,10 +49,15 @@ def positions_frame(rows: Iterable, now: dt.datetime | None = None) -> pd.DataFr
         status = _get(r, "status", "OPEN")
         side = _get(r, "transaction") or ("BUY" if _get(r, "direction") in ("LONG", "BUY") else "SELL")
         market = profile_for(instrument).name
-        gross = _get(r, "net_pnl") if status == "CLOSED" else None
-        charges = None
-        if status == "CLOSED" and entry and exit_price is not None:
-            charges = option_trade_charges(entry, exit_price, qty, side, market).total
+        booked_costs = _get(r, "costs") if status == "CLOSED" else None
+        if booked_costs is not None:
+            # Closed by the current paper broker: gross, costs and net were booked together (net = gross - costs).
+            gross, charges, net_booked = _get(r, "gross_pnl"), float(booked_costs), _get(r, "net_pnl")
+        else:
+            # Legacy row: `net_pnl` holds the GROSS booked P&L; charges are estimated at the configured rates.
+            gross, charges, net_booked = (_get(r, "net_pnl") if status == "CLOSED" else None), None, None
+            if status == "CLOSED" and entry and exit_price is not None:
+                charges = option_trade_charges(entry, exit_price, qty, side, market).total
         end = closed if closed is not None else (now or now_ist())  # positions are stamped in IST
         records.append(
             {
@@ -76,7 +83,8 @@ def positions_frame(rows: Iterable, now: dt.datetime | None = None) -> pd.DataFr
                 "invested": (entry or 0.0) * qty,
                 "gross_pnl": gross,
                 "charges": charges,
-                "net_pnl": None if gross is None else gross - (charges or 0.0),
+                "charges_booked": booked_costs is not None,  # True: charges were booked by the broker; False: estimated
+                "net_pnl": net_booked if net_booked is not None else (None if gross is None else gross - (charges or 0.0)),
                 "return_pct": (gross / ((entry or 0.0) * qty) * 100.0) if gross is not None and entry and qty else None,
                 "held": (end - opened) if opened is not None else None,
                 "tag": _get(r, "tag"),
@@ -143,7 +151,7 @@ def trade_stats(closed: pd.DataFrame) -> dict:
     wins, losses = net[net > 0], net[net < 0]
     gross_win, gross_loss = wins.sum(), -losses.sum()
     equity = np.cumsum(net)
-    drawdown = float((equity - np.maximum.accumulate(equity)).min())
+    drawdown = max_drawdown(equity)  # from the starting equity, so a losing start counts
     avg_win = float(wins.mean()) if len(wins) else None
     avg_loss = float(losses.mean()) if len(losses) else None
 

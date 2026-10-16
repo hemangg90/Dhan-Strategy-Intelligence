@@ -30,6 +30,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 import pandas as pd
 
+from quant_intelligence.analytics.metrics import max_drawdown, profit_factor
 from quant_intelligence.backtesting.engine import market_for, max_drawdown_in_r, net_r_multiple, run_backtest
 from quant_intelligence.config.settings import DATA_CACHE_DIR, SETTINGS
 from quant_intelligence.features.feature_engine import compute_features
@@ -223,15 +224,13 @@ def _trade_stats(net_r: pd.Series, days: pd.Series, ci: bool = True) -> dict:
     r = net_r[mask].to_numpy(dtype=float)
     if len(r) == 0:
         return {"n_trades": 0}
-    wins, losses = r[r > 0].sum(), -r[r < 0].sum()
-    equity = np.cumsum(r)
     stats = {
         "n_trades": int(len(r)),
         "mean_net_r": float(r.mean()),
         "win_rate": float((r > 0).mean()),
-        "profit_factor": float(wins / losses) if losses > 0 else None,
+        "profit_factor": profit_factor(r),
         "total_net_r": float(r.sum()),
-        "max_drawdown_r": float((equity - np.maximum.accumulate(equity)).min()),
+        "max_drawdown_r": max_drawdown(np.cumsum(r)),
     }
     if ci:
         stats["mean_net_r_ci95"] = _bootstrap_ci(r, days[mask].to_numpy())

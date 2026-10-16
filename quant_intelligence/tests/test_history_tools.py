@@ -181,3 +181,20 @@ def test_the_history_tab_renders_when_every_trade_is_closed():
     page = Path(__file__).resolve().parents[1] / "pages" / "08_Positions_and_Orders.py"
     at = AppTest.from_file(str(page), default_timeout=120).run()
     assert not at.exception, [e.value for e in at.exception]
+
+
+def test_a_current_convention_row_round_trips_with_its_booked_costs():
+    """Rows closed by the current paper broker (gross, costs, net) restore exactly, not as re-estimated legacy rows."""
+    from quant_intelligence.database.db import get_session, init_db
+
+    init_db()
+    booked = _position("IMP-BOOKED", gross_pnl=-1500.0, costs=61.5, net_pnl=-1561.5, costs_model="OPTION_PREMIUM", exit_price=100.0)
+    frame = _download_csv([booked])
+    assert bool(frame["charges_booked"].iloc[0]) and frame["charges"].iloc[0] == pytest.approx(61.5)
+    csv_roundtrip = pd.read_csv(pd.io.common.StringIO(frame.to_csv(index=False)))
+    assert history_io.import_positions(csv_roundtrip)["inserted"] == 1
+    with get_session() as s:
+        row = s.query(Position).filter_by(position_id="IMP-BOOKED").one()
+    assert (row.gross_pnl, row.costs, row.net_pnl) == pytest.approx((-1500.0, 61.5, -1561.5))
+    again = positions_frame([row]).iloc[0]  # and the page shows the same figures it showed before the export
+    assert (again["gross_pnl"], again["charges"], again["net_pnl"]) == pytest.approx((-1500.0, 61.5, -1561.5))

@@ -11,6 +11,7 @@ Non-option positions: brokerage + GST + exit slippage only. Statutory charges fo
 from __future__ import annotations
 
 from quant_intelligence.config.settings import SETTINGS
+from quant_intelligence.execution.charges import option_trade_charges
 from quant_intelligence.utils.market_profile import profile_for
 
 
@@ -24,16 +25,9 @@ def round_trip_costs(pos: dict, exit_price: float) -> tuple[float, str]:
     exit_slippage = c.slippage_ticks * c.tick_size * qty
 
     if pos.get("option_type"):
-        mcx = profile_for(pos.get("underlying") or pos.get("instrument")).name == "MCX"
-        bought_first = (pos.get("transaction") or ("BUY" if pos["direction"] == "LONG" else "SELL")) == "BUY"
-        buy_turnover = (entry if bought_first else exit_price) * qty
-        sell_turnover = (exit_price if bought_first else entry) * qty
-        turnover = buy_turnover + sell_turnover
-        stt = sell_turnover * (c.opt_stt_sell_rate_mcx if mcx else c.opt_stt_sell_rate_nse)
-        txn = turnover * (c.opt_txn_rate_mcx if mcx else c.opt_txn_rate_nse)
-        sebi = turnover * c.sebi_rate
-        stamp = buy_turnover * c.stamp_buy_rate
-        gst = c.gst_rate * (brokerage + txn + sebi)
-        return brokerage + stt + txn + sebi + stamp + gst + exit_slippage, "OPTION_PREMIUM"
+        market = profile_for(pos.get("underlying") or pos.get("instrument")).name
+        side = pos.get("transaction") or ("BUY" if pos["direction"] == "LONG" else "SELL")
+        # One definition of option charges, shared with the Positions page (execution/charges.py).
+        return option_trade_charges(entry, exit_price, qty, side, market).total + exit_slippage, "OPTION_PREMIUM"
 
     return brokerage + c.gst_rate * brokerage + exit_slippage, "BROKERAGE_ONLY"

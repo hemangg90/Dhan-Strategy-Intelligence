@@ -1,9 +1,9 @@
 """Itemised charges for a paper option trade, at Dhan's brokerage and the statutory option rates.
 
-Display-only: the paper broker books GROSS premium P&L. This module answers "what would this trade
-have cost" using the same rates as the backtest cost model (config.settings.CostAssumptions), but on
-the ACTUAL entry/exit premiums, so the UI can show gross P&L, charges and net P&L the way a broker
-contract note does.
+The single definition of option charges: used by the paper broker when it closes a position
+(brokers/paper_costs.py), to estimate charges on legacy rows and open positions, and by the order ticket. It uses the same
+rates as the backtest cost model (config.settings.CostAssumptions), but on the ACTUAL entry/exit premiums, so the UI shows
+gross P&L, charges and net P&L the way a broker contract note does.
 """
 from __future__ import annotations
 
