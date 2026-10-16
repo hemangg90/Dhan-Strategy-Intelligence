@@ -255,7 +255,7 @@ with side:
                 st.info(f"{strategy_name} needs a live option chain - load one in the Option chain tab.")
             elif setup_status is not None and setup_status.status == WAITING_FOR_SETUP:
                 st.caption("Entry conditions are not met on the latest closed bar yet.")
-        st.markdown("**Regime probabilities**")
+        st.markdown("**Regime scores** (heuristic, not calibrated probabilities)")
         st.plotly_chart(regime_chart(output.regime_probabilities), width="stretch", config=_CFG)
 
     if setup is not None:

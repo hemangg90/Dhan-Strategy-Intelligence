@@ -1,10 +1,13 @@
 """
 Regime Engine.
 
-Transparent, rule/statistical regime classifier (no deep learning). Produces
-a probability distribution over regimes rather than a single hard label, so
-downstream conditional-expectancy calculations can weight by regime
-similarity and the UI can show classifier confidence honestly.
+Transparent, rule-based regime classifier (no deep learning, no fitted model). Produces a normalised
+SCORE distribution over regimes rather than a single hard label.
+
+IMPORTANT: these are heuristic scores passed through a softmax so they sum to 1. They are NOT calibrated
+probabilities: nothing has been fitted or validated against realised outcomes, and the regimes overlap (a market can be
+trending AND high-volatility), which caps the largest share. The regime label is currently used for display, logging and
+order tags only; it is not an input to the analogue search or the strategy ranking.
 
 Regimes: TREND_UP, TREND_DOWN, RANGE, COMPRESSION, VOL_EXPANSION,
 VOL_CONTRACTION, HIGH_VOL, LOW_VOL, EVENT_DRIVEN, LIQUIDITY_STRESS.
@@ -12,10 +15,8 @@ VOL_CONTRACTION, HIGH_VOL, LOW_VOL, EVENT_DRIVEN, LIQUIDITY_STRESS.
 Method: each regime has a scoring rule built from already-computed features
 (trend_slope, momentum, atr_percentile, vol_expansion, relative_volume,
 market_structure, expiry_proximity). Scores are converted into a probability
-distribution via a softmax, which is a standard, transparent way to turn
-multiple weak evidence signals into calibrated-looking probabilities without
-hiding the logic in a black box. The label is the argmax; the full
-distribution (and thus confidence = max probability) is always stored.
+distribution via a softmax, a transparent way to turn several weak evidence signals into a relative ranking of
+regimes. The label is the argmax; the full distribution is always stored, and "confidence" is simply the largest share.
 """
 from __future__ import annotations
 

@@ -18,9 +18,12 @@ before enabling live order flow, and start with the smallest possible size.
 """
 from __future__ import annotations
 
+import requests
+
 from quant_intelligence.brokers.base_broker import BaseBroker, OrderAck, OrderRequest
 from quant_intelligence.brokers.dhan_api_client import DhanApiClient, DhanApiError
 from quant_intelligence.config.settings import SETTINGS
+from quant_intelligence.risk.risk_engine import consume_approval
 from quant_intelligence.utils.logging_utils import log_event
 
 
@@ -31,6 +34,9 @@ class DhanBroker(BaseBroker):
     def __init__(self):
         # Credentials are read live: a broker built before a token was saved/renewed must not keep the old ones.
         self.client = DhanApiClient()
+        # Set when an order request failed in transit (timeout / dropped connection): it may have reached Dhan, so
+        # nothing further is sent until a human has checked Dhan's order book. Never cleared automatically.
+        self.unreconciled_order: str | None = None
 
     @property
     def client_id(self) -> str:
@@ -52,9 +58,24 @@ class DhanBroker(BaseBroker):
             log_event("dhan_broker", f"BLOCKED live order attempt: {reason}", level="ERROR")
             return OrderAck(order_id="BLOCKED", status="REJECTED", reject_reason=reason)
 
+        if self.unreconciled_order:
+            reason = (
+                f"A previous live order ({self.unreconciled_order}) has an UNKNOWN outcome: the request may have reached Dhan. "
+                "Check Dhan's order book, then restart the app to clear this block. No new order will be sent."
+            )
+            log_event("dhan_broker", f"BLOCKED live order attempt: {reason}", level="ERROR")
+            return OrderAck(order_id="BLOCKED", status="REJECTED", reject_reason=reason)
+
         if not order.security_id:
             reason = "OrderRequest.security_id is required for live Dhan orders (resolve a contract first)"
             log_event("dhan_broker", f"BLOCKED live order attempt: {reason}", level="ERROR")
+            return OrderAck(order_id="BLOCKED", status="REJECTED", reject_reason=reason)
+
+        # Defence in depth: the order must carry a risk-engine approval issued moments ago, usable once. Every caller
+        # already runs the risk engine; this makes skipping it (or replaying an approval) impossible by construction.
+        if not consume_approval(order.decision_id):
+            reason = "No valid, unused risk-engine approval for this order (missing, expired or already used)"
+            log_event("dhan_broker", f"BLOCKED live order attempt: {reason}", level="ERROR", decision_id=order.decision_id)
             return OrderAck(order_id="BLOCKED", status="REJECTED", reject_reason=reason)
 
         transaction_type = order.transaction_type or ("BUY" if order.direction == "LONG" else "SELL")
@@ -77,6 +98,16 @@ class DhanBroker(BaseBroker):
         except DhanApiError as e:
             log_event("dhan_broker", f"Live order REJECTED by Dhan API: {e}", level="ERROR", decision_id=order.decision_id)
             return OrderAck(order_id="ERROR", status="REJECTED", reject_reason=str(e))
+        except requests.RequestException as e:
+            # Timeout / connection reset AFTER the request was sent: Dhan may or may not have the order. Do not report a
+            # rejection and do not retry; block further orders until the outcome is checked by a human.
+            self.unreconciled_order = order.decision_id or "unknown"
+            reason = (
+                f"Order outcome UNKNOWN ({type(e).__name__}): the request may have reached Dhan. "
+                "Check Dhan's order book before doing anything else; no automatic retry will be made."
+            )
+            log_event("dhan_broker", reason, level="ERROR", decision_id=order.decision_id)
+            return OrderAck(order_id="UNKNOWN", status="UNKNOWN", reject_reason=reason)
 
         order_id = response.get("orderId", "UNKNOWN")
         status = response.get("orderStatus", "PENDING")

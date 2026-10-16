@@ -26,6 +26,16 @@ class Setup:
     meta: dict = field(default_factory=dict)
 
 
+def setup_geometry_ok(setup: Setup) -> bool:
+    """A tradable setup has a positive entry, a stop on the losing side and a target on the winning side.
+    Some strategies target a level (band midline, pivot, prior close) that price may already have passed, which would
+    otherwise be simulated as an instant "target hit" at a loss."""
+    e, s, t = setup.entry_price, setup.stop_price, setup.target_price
+    if not all(isinstance(x, (int, float)) and x == x and x > 0 for x in (e, s, t)):
+        return False
+    return (s < e < t) if setup.direction == "LONG" else (t < e < s)
+
+
 @dataclass
 class TradeResult:
     setup: Setup
@@ -37,6 +47,9 @@ class TradeResult:
     mae: float
     gross_pnl: float
     outcome: str  # WIN / LOSS / SCRATCH / OPEN
+    # Why the trade ended: STOP, STOP_GAP (a bar opened beyond the stop, filled at the worse open), TARGET, TIME
+    # (max holding reached) or DATA_END (the data ran out first: the trade was still OPEN, so its result is NOT final).
+    exit_reason: str | None = None
 
 
 class BaseStrategy(abc.ABC):
@@ -128,6 +141,7 @@ class BaseStrategy(abc.ABC):
         exit_price = None
         exit_ts = None
         outcome = "OPEN"
+        exit_reason = None
 
         risk_per_unit = abs(setup.entry_price - setup.stop_price)
         if risk_per_unit == 0:
@@ -147,6 +161,7 @@ class BaseStrategy(abc.ABC):
                 mae=0.0,
                 gross_pnl=gross_pnl,
                 outcome="WIN" if gross_pnl > 0 else ("LOSS" if gross_pnl < 0 else "SCRATCH"),
+                exit_reason="DATA_END" if entry_idx >= n - 1 else "TIME",
             )
 
         for idx in range(monitor_start_idx, end_idx + 1):
@@ -168,19 +183,21 @@ class BaseStrategy(abc.ABC):
                 hit_stop = bar["high"] >= setup.stop_price
                 hit_target = bar["low"] <= setup.target_price
 
-            if hit_stop and hit_target:
-                # Conservative assumption: stop is hit first within the bar.
-                exit_price = setup.stop_price
-                outcome = "LOSS"
-                exit_ts = bar["timestamp"]
-                break
             if hit_stop:
-                exit_price = setup.stop_price
+                # A bar that OPENS beyond the stop gapped through it: the stop cannot fill at its price, only at the
+                # (worse) open. If both stop and target fall inside one bar the order of events is unknowable from OHLC,
+                # so the stop is assumed first (conservative).
+                bar_open = float(bar["open"])
+                stop_fill = min(setup.stop_price, bar_open) if direction == "LONG" else max(setup.stop_price, bar_open)
+                exit_price = stop_fill
+                exit_reason = "STOP_GAP" if stop_fill != setup.stop_price else "STOP"
                 outcome = "LOSS"
                 exit_ts = bar["timestamp"]
                 break
             if hit_target:
+                # Filled at the target even if the bar opened beyond it (the better open is ignored: conservative).
                 exit_price = setup.target_price
+                exit_reason = "TARGET"
                 outcome = "WIN"
                 exit_ts = bar["timestamp"]
                 break
@@ -192,6 +209,7 @@ class BaseStrategy(abc.ABC):
             exit_ts = last_bar["timestamp"]
             pnl_dir = 1 if direction == "LONG" else -1
             gross_pnl_check = pnl_dir * (exit_price - setup.entry_price)
+            exit_reason = "DATA_END" if entry_idx + max_holding_bars > n - 1 else "TIME"
             outcome = "WIN" if gross_pnl_check > 0 else ("LOSS" if gross_pnl_check < 0 else "SCRATCH")
 
         pnl_dir = 1 if direction == "LONG" else -1
@@ -208,4 +226,5 @@ class BaseStrategy(abc.ABC):
             mae=mae,
             gross_pnl=gross_pnl,
             outcome=outcome,
+            exit_reason=exit_reason,
         )

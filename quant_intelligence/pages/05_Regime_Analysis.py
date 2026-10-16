@@ -14,7 +14,7 @@ from quant_intelligence.ui.theme import apply_theme
 apply_theme()
 init_session_state()
 st.title("Regime Analysis")
-st.caption("Transparent rule/statistical regime classifier. Probabilities, not just a single label.")
+st.caption("Transparent rule-based regime classifier. Shows normalised heuristic scores, NOT calibrated probabilities, and the regime is not used by the ranking.")
 
 output = run_pipeline_cached()
 if output is None:
@@ -23,7 +23,7 @@ if output is None:
 
 st.subheader(f"Current regime: {output.regime_label} ({output.regime_confidence*100:.0f}% confidence)")
 fig = go.Figure(go.Bar(x=list(output.regime_probabilities.keys()), y=list(output.regime_probabilities.values())))
-fig.update_layout(template="plotly_white", height=350, margin=dict(l=20, r=20, t=30, b=20), yaxis_title="Probability")
+fig.update_layout(template="plotly_white", height=350, margin=dict(l=20, r=20, t=30, b=20), yaxis_title="Normalised score share")
 st.plotly_chart(fig, width="stretch")
 
 st.divider()

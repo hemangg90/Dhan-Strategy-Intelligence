@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 
 from quant_intelligence.config.settings import SETTINGS
-from quant_intelligence.strategies.base_strategy import BaseStrategy, TradeResult
+from quant_intelligence.strategies.base_strategy import BaseStrategy, TradeResult, setup_geometry_ok
 
 
 @dataclass
@@ -131,12 +131,17 @@ def run_backtest(
 
     trades: list[TradeResult] = []
     next_available_idx = 0
+    invalid_setups = 0
     premium_model = _premium_model(ohlcv, instrument)
 
     for setup in setups:
         entry_idx = ts_to_idx.get(setup.timestamp)
         if entry_idx is None or entry_idx < next_available_idx:
             continue  # skip overlapping setups while a trade would still be open
+
+        if not setup_geometry_ok(setup):
+            invalid_setups += 1  # e.g. the target is already on the wrong side of the entry: not a tradable setup
+            continue
 
         result = strategy.simulate_trade(setup, ohlcv, entry_idx, max_holding_bars=max_holding_bars)
         if premium_model is not None:
@@ -148,9 +153,14 @@ def run_backtest(
         exit_idx = ts_to_idx.get(result.exit_timestamp, entry_idx + max_holding_bars)
         next_available_idx = exit_idx + 1
 
-    run = BacktestResult(run_id=run_id, strategy_name=strategy.name, instrument=instrument, split=split, trades=trades)
+    # A trade still open when the data ends has no final outcome: counting it as closed at the last price would feed a
+    # partial result into the statistics (and, live, into the analogues). Drop it and say so.
+    resolved = [t for t in trades if t.exit_reason != "DATA_END"]
+    run = BacktestResult(run_id=run_id, strategy_name=strategy.name, instrument=instrument, split=split, trades=resolved)
     market = market_for(instrument)
-    run.metrics = _compute_run_metrics(trades, quantity, market)
+    run.metrics = _compute_run_metrics(resolved, quantity, market)
+    run.metrics["n_unresolved_excluded"] = len(trades) - len(resolved)
+    run.metrics["n_invalid_setups_skipped"] = invalid_setups
 
     if persist:
         _persist_backtest(run, strategy, ohlcv, features, feat_by_ts, quantity, market)
@@ -171,6 +181,27 @@ def _premium_model(ohlcv: pd.DataFrame, instrument: str):
 
         log_event("backtest", f"Premium model unavailable for {instrument}, using the fixed assumption: {e}", level="WARNING")
         return None
+
+
+MIN_DAYS_FOR_SHARPE = 10
+
+
+def daily_sharpe_sortino(trades: list[TradeResult], net_rs: np.ndarray) -> tuple[float, float]:
+    """Sharpe and Sortino from DAILY net R (sum of the R of trades closed that day), annualised by sqrt(252).
+
+    Annualising per-trade R by sqrt(252) assumes one trade a day and overstates the ratio for strategies that
+    trade more often. Fewer than MIN_DAYS_FOR_SHARPE trading days, or no variance, gives NaN (not enough evidence)."""
+    nan = float("nan")
+    if len(trades) == 0:
+        return nan, nan
+    days = pd.Series(net_rs).groupby(pd.to_datetime([t.exit_timestamp for t in trades]).normalize()).sum()
+    if len(days) < MIN_DAYS_FOR_SHARPE:
+        return nan, nan
+    mean, sd = float(days.mean()), float(days.std(ddof=1))
+    sharpe = mean / sd * np.sqrt(252) if sd > 0 else nan
+    downside_dev = float(np.sqrt(np.mean(np.minimum(days.to_numpy(), 0.0) ** 2)))
+    sortino = mean / downside_dev * np.sqrt(252) if downside_dev > 0 else nan
+    return float(sharpe), float(sortino)
 
 
 def _compute_run_metrics(trades: list[TradeResult], quantity: int, market: str = "NSE") -> dict:
@@ -196,12 +227,7 @@ def _compute_run_metrics(trades: list[TradeResult], quantity: int, market: str =
     drawdown = equity_curve - running_max
     max_drawdown = float(drawdown.min()) if len(drawdown) else 0.0
 
-    r_std = r_multiples.std(ddof=1) if len(r_multiples) > 1 else np.nan
-    sharpe = float(r_multiples.mean() / r_std * np.sqrt(252)) if r_std and not np.isnan(r_std) and r_std > 0 else float("nan")
-
-    downside = r_multiples[r_multiples < 0]
-    downside_std = downside.std(ddof=1) if len(downside) > 1 else np.nan
-    sortino = float(r_multiples.mean() / downside_std * np.sqrt(252)) if downside_std and not np.isnan(downside_std) and downside_std > 0 else float("nan")
+    sharpe, sortino = daily_sharpe_sortino(trades, net_rs)
 
     return {
         "n_trades": len(trades),

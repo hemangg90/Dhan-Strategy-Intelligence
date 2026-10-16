@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import datetime as dt
 import numbers
+import threading
+import time
 from dataclasses import dataclass, field
 
 from quant_intelligence.config.risk_groups import group_for
@@ -53,6 +55,9 @@ class AccountState:
     open_positions: list = field(default_factory=list)  # [{"instrument", "direction", "risk"}]
     closed_today: list = field(default_factory=list)  # [{"strategy", "net_pnl", "closed_at"}], oldest first
     day_peak_pnl: float = 0.0  # highest daily_pnl reached today
+    # False when today's P&L could not be established (e.g. a live broker that did not report it). The daily-loss limit
+    # cannot be checked then, so the engine fails closed instead of treating the unknown as zero.
+    daily_pnl_known: bool = True
 
 
 @dataclass
@@ -81,6 +86,31 @@ class ProposedTrade:
 MAX_QUOTE_AGE_SEC = 15 * 60  # a 5-minute bar plus generous latency
 MAX_SPREAD_PCT = 2.0  # (ask - bid) / mid, in percent
 MAX_SLIPPAGE_STOP_FRACTION = 0.5  # half-spread (expected slippage) vs distance from entry to stop
+
+
+# Approvals issued by `evaluate_trade`, so a broker can insist that an order was actually vetted. A live order must
+# present a decision id that this process approved moments ago; each approval can be spent once (no replays).
+APPROVAL_TTL_SEC = 120.0
+_approvals: dict[str, float] = {}
+_approvals_lock = threading.Lock()
+
+
+def _note_approval(decision_id: str) -> None:
+    with _approvals_lock:
+        now = time.monotonic()
+        for k in [k for k, t in _approvals.items() if now - t > APPROVAL_TTL_SEC]:
+            del _approvals[k]
+        _approvals[decision_id] = now
+
+
+def consume_approval(decision_id: str | None, max_age_sec: float = APPROVAL_TTL_SEC) -> bool:
+    """True once for a decision id that `evaluate_trade` approved within `max_age_sec`; False for anything else
+    (unknown id, expired, already used, or no id), so a missing approval fails closed."""
+    if not decision_id:
+        return False
+    with _approvals_lock:
+        issued = _approvals.pop(decision_id, None)
+    return issued is not None and time.monotonic() - issued <= max_age_sec
 
 
 @dataclass
@@ -169,6 +199,10 @@ def evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime
         checks["spread_and_slippage_acceptable"] = spread_problem is None
         if spread_problem:
             return _veto(decision_id, spread_problem, checks)
+
+    checks["daily_pnl_known"] = account.daily_pnl_known
+    if not account.daily_pnl_known:
+        return _veto(decision_id, "Today's P&L is unavailable from the broker: the daily loss limit cannot be verified", checks)
 
     daily_loss_pct = -account.daily_pnl / account.equity * 100 if account.equity > 0 else 0
     checks["daily_loss_within_limit"] = daily_loss_pct < limits.max_daily_loss_pct
@@ -284,6 +318,7 @@ def evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime
 
     log_event("risk_engine", "Trade approved by risk engine", level="INFO", decision_id=decision_id, strategy=trade.strategy_name)
     _persist_risk_event(decision_id, "APPROVED", "All risk checks passed", checks)
+    _note_approval(decision_id)
     return RiskDecision(decision_id, True, "All risk checks passed", checks)
 
 
@@ -358,5 +393,5 @@ def _persist_risk_event(decision_id: str, event_type: str, reason: str, details:
 
         with get_session() as session:
             session.add(RiskEvent(decision_id=decision_id, event_type=event_type, reason=reason, details=details))
-    except Exception:
-        pass
+    except Exception as exc:  # the verdict itself is unaffected, but a lost audit row must not be invisible
+        log_event("risk_engine", f"Could not persist risk event {decision_id}: {type(exc).__name__}", level="ERROR")

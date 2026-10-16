@@ -30,6 +30,18 @@ def test_connection() -> tuple[bool, str]:
     return True, "Dhan accepted the credentials" + (f" (available balance {F.inr(balance)})." if balance is not None else ".")
 
 
+def _lockdown_status() -> str:
+    """Token state and expiry only, with nothing derived from the secret itself."""
+    ts = token_status(SETTINGS.dhan_access_token)
+    state = ts["state"]
+    if state == "missing":
+        return "token not set"
+    if state == "unknown":
+        return "token present (expiry unknown)"
+    when = f"{ts['expires_at']:%d %b %H:%M} IST"
+    return {"valid": f"token valid until {when}", "expiring": f"token expires {when}", "expired": f"token EXPIRED {when}"}[state]
+
+
 def _token_line() -> str:
     ts = token_status(SETTINGS.dhan_access_token)
     state = ts["state"]
@@ -68,8 +80,8 @@ def _keeper_line() -> str:
 
 def render_credentials_panel() -> None:
     if SETTINGS.demo_lockdown:
-        # Presentation mode: status only, no client ID, no token, no way to overwrite credentials.
-        st.caption(f"Dhan: {_token_line()} (credentials hidden: demo lockdown)")
+        # Presentation mode: status only. No client ID, no token (not even its last characters), no form.
+        st.caption(f"Dhan: {_lockdown_status()} (credentials hidden: demo lockdown)")
         return
     expired = token_status(SETTINGS.dhan_access_token)["state"] in ("missing", "expired")
     with st.expander("Dhan API credentials", expanded=expired):

@@ -197,7 +197,8 @@ if st.button("Submit to Risk Engine -> DhanBroker (LIVE)", type="primary", disab
             tag=TIE_BREAK_TAG if output.ranking.tie_break else None,
         )
         ack = broker.place_order(order)
-        ENGINE.add_trade()
+        if ack.status != "REJECTED":  # a rejected or blocked order never reached the market
+            ENGINE.add_trade()
         if ack.status in ("FILLED", "TRADED", "PENDING", "TRANSIT"):
             st.success(f"LIVE order {ack.status}: {contract.transaction} {order.quantity} {contract.trading_symbol} (order {ack.order_id})")
         else:

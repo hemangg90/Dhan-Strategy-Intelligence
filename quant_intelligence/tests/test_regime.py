@@ -31,3 +31,20 @@ def test_confidence_is_max_probability():
     features = {"trend_slope": 0.01, "momentum_20": 0.05, "atr_percentile_100": 0.5, "vol_expansion": 1.0, "relative_volume": 1.0, "market_structure": 1}
     _, probs = classify_regime(features)
     assert regime_confidence(probs) == max(probs.values())
+
+
+def test_regime_scores_are_a_normalised_distribution_and_not_claimed_calibrated():
+    import quant_intelligence.regimes.regime_engine as engine
+
+    label, probs = engine.classify_regime({})  # every feature missing: neutral defaults, no crash
+    assert label in engine.REGIMES and abs(sum(probs.values()) - 1.0) < 1e-9
+    assert all(0.0 <= p <= 1.0 for p in probs.values())
+    assert "NOT calibrated" in engine.__doc__
+
+
+def test_regime_label_follows_a_strong_trend_and_a_strong_down_trend():
+    import quant_intelligence.regimes.regime_engine as engine
+
+    up = {"trend_slope": 0.004, "momentum_20": 0.03, "market_structure": 1, "atr_percentile_100": 0.5, "vol_expansion": 1.0}
+    down = {**up, "trend_slope": -0.004, "momentum_20": -0.03, "market_structure": -1}
+    assert engine.classify_regime(up)[0] == "TREND_UP" and engine.classify_regime(down)[0] == "TREND_DOWN"

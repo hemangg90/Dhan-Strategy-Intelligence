@@ -93,12 +93,15 @@ def test_cache_write_is_atomic_and_leaves_no_temp_files(tmp_path):
 def test_a_reader_never_sees_a_torn_file_while_a_writer_replaces_it(tmp_path):
     path = tmp_path / "Y_5min.parquet"
     dm_module._write_cache(_frame(50), path)
-    stop, errors = threading.Event(), []
+    stop, errors, writer_errors = threading.Event(), [], []
 
     def writer():
         i = 0
         while not stop.is_set():
-            dm_module._write_cache(_frame(50 + i % 20), path)
+            try:
+                dm_module._write_cache(_frame(50 + i % 20), path)
+            except Exception as e:  # e.g. PermissionError on Windows while a reader has the file open
+                writer_errors.append(e)
             i += 1
 
     t = threading.Thread(target=writer)
@@ -106,14 +109,16 @@ def test_a_reader_never_sees_a_torn_file_while_a_writer_replaces_it(tmp_path):
     try:
         deadline = time.time() + 1.5
         while time.time() < deadline:
-            try:
-                pd.read_parquet(path)
-            except Exception as e:  # a torn read would raise an Arrow error here
-                errors.append(e)
+            # The production reader: None means "unreadable" and triggers a refetch from Dhan, which a concurrent
+            # atomic swap must never cause (a torn file raises an Arrow error; a Windows lock raises PermissionError).
+            if dm_module._read_cache(path) is None:
+                errors.append("cache reported unreadable during a concurrent swap")
+            time.sleep(0.001)  # a page reads now and then; a reader that never lets go can starve any Windows rename
     finally:
         stop.set()
         t.join()
     assert errors == []
+    assert writer_errors == [], f"the writer must survive concurrent readers: {writer_errors[:1]}"
 
 
 def test_an_unreadable_cache_file_is_refetched_instead_of_crashing(tmp_path, monkeypatch):

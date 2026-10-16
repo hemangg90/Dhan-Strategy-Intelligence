@@ -35,24 +35,27 @@ html { font-size: 17px; }  /* projector readability */
 .qi-banner.go { border-left:8px solid var(--qi-good); } .qi-banner.go .t { color:#047857; }
 .qi-banner.tie { border-left:8px solid var(--qi-warning); } .qi-banner.tie .t { color:#b45309; }
 
+.stApp .stButton button[kind="primary"], .stApp .stButton button[data-testid="stBaseButton-primary"] { background:#111827; border-color:#111827; }
+.stApp .stButton button[kind="primary"] *, .stApp .stButton button[data-testid="stBaseButton-primary"] * { color:#ffffff !important; }
 .qi-prob { display:grid; grid-template-columns:150px 1fr 48px; gap:10px; align-items:center; margin:5px 0; font-size:0.9rem; }
 .qi-prob .bar { height:10px; background:var(--qi-card-2); border-radius:999px; overflow:hidden; }
 .qi-prob .bar > div { height:100%; background:var(--qi-blue); border-radius:999px; }
 .qi-prob.top .bar > div { background:var(--qi-text); } .qi-prob.top { font-weight:650; }
 .qi-prob .n { text-align:right; font-family:ui-monospace,Menlo,Consolas,monospace; color:var(--qi-text-2); }
 
+.qi-tablewrap { overflow-x:auto; max-width:100%; }
 .qi-table { width:100%; border-collapse:separate; border-spacing:0; background:var(--qi-card); border:1px solid var(--qi-border); border-radius:14px; overflow:hidden; font-size:0.9rem; }
-.qi-table th { text-align:left; color:var(--qi-muted); font-size:0.7rem; letter-spacing:.08em; text-transform:uppercase; padding:10px 12px; background:var(--qi-card-2); border-bottom:1px solid var(--qi-border); }
-.qi-table td { padding:10px 12px; border-bottom:1px solid var(--qi-border); vertical-align:middle; }
+.qi-table th { text-align:left; color:var(--qi-muted); font-size:0.66rem; letter-spacing:.06em; text-transform:uppercase; padding:9px 8px; background:var(--qi-card-2); border-bottom:1px solid var(--qi-border); }
+.qi-table td { padding:9px 8px; border-bottom:1px solid var(--qi-border); vertical-align:middle; }
 .qi-table tr:last-child td { border-bottom:none; }
 .qi-table tr.sel td { background:#f1f5f9; }
 .qi-table .mono { font-family:ui-monospace,Menlo,Consolas,monospace; }
 .qi-table .why { color:var(--qi-text-2); font-size:0.8rem; }
-.qi-exp { display:flex; align-items:center; gap:8px; min-width:170px; }
+.qi-exp { display:flex; align-items:center; gap:6px; min-width:120px; }
 .qi-exp .track { position:relative; flex:1; height:8px; background:var(--qi-card-2); border-radius:999px; }
 .qi-exp .mid { position:absolute; left:50%; top:-2px; width:1px; height:12px; background:var(--qi-muted); }
 .qi-exp .fill { position:absolute; top:0; height:8px; border-radius:999px; }
-.qi-exp .val { width:58px; text-align:right; font-family:ui-monospace,Menlo,Consolas,monospace; }
+.qi-exp .val { width:54px; text-align:right; font-family:ui-monospace,Menlo,Consolas,monospace; }
 .qi-note { color:var(--qi-text-2); font-size:0.82rem; margin-top:8px; }
 </style>
 """
@@ -133,7 +136,7 @@ def ranking_table(rows: list[dict], show_why: bool = True) -> None:
     for r in rows:
         status = r["Status"]
         cells = [
-            f'<td><b>{html.escape(r["Strategy"])}</b></td>',
+            f'<td style="white-space:nowrap"><b>{html.escape(r["Strategy"])}</b></td>',
             f'<td>{chip(status, _STATUS_TONE.get(status, "muted"))}</td>',
             f'<td>{_exp_cell(r["Cond. expectancy (R, net of costs)"])}</td>',
             f'<td class="mono">{r["Win rate (historical)"] or "n/a"}</td>',
@@ -146,8 +149,8 @@ def ranking_table(rows: list[dict], show_why: bool = True) -> None:
         body.append(f'<tr class="{"sel" if status in ("SELECTED", "TIE-BREAK") else ""}">{"".join(cells)}</tr>')
     head = ["Strategy", "Status", "Net expectancy", "Win rate", "Sample", "Confidence", "Max DD"] + (["Why"] if show_why else [])
     st.markdown(
-        f'<table class="qi-table"><thead><tr>{"".join(f"<th>{h}</th>" for h in head)}</tr></thead>'
-        f'<tbody>{"".join(body)}</tbody></table>'
+        f'<div class="qi-tablewrap"><table class="qi-table"><thead><tr>{"".join(f"<th>{h}</th>" for h in head)}</tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table></div>'
         '<div class="qi-note">Historical, cost-adjusted conditional statistics from similar past market states. '
         "Not a prediction. Small samples: read the confidence column.</div>",
         unsafe_allow_html=True,

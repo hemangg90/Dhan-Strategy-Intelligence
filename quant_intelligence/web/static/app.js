@@ -73,7 +73,7 @@ async function dashboard() {
     <div class="sub"><b>${esc(o.instrument)}</b> &middot; last bar ${esc(new Date(o.last_bar).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }))} (${esc(ageText)}) &middot; research-first terminal for Indian index derivatives</div></div>
   </div>
   <div class="grid4">
-    <div class="card kpi"><div class="l">Market regime</div><div class="v">${esc(title(o.regime.label))}</div><div class="s">${num(o.regime.confidence * 100, 0)}% model confidence (uncalibrated)</div></div>
+    <div class="card kpi"><div class="l">Market regime</div><div class="v">${esc(title(o.regime.label))}</div><div class="s">top score share ${num(o.regime.confidence * 100, 0)}% (heuristic, not a probability)</div></div>
     <div class="card kpi"><div class="l">Data quality</div><div class="v ${o.data_quality === "OK" ? "pos" : "neg"}">${esc(o.data_quality)}</div><div class="s">${o.data_quality_issues.length} issue(s)</div></div>
     <div class="card kpi"><div class="l">Data age</div><div class="v ${fresh ? "pos" : "neg"}">${age == null ? "n/a" : age > 120 ? (age / 60).toFixed(1) + " h" : Math.max(age, 0).toFixed(0) + " min"}</div><div class="s">orders need data under ${o.max_order_age_minutes} min old</div></div>
     <div class="card kpi"><div class="l">Eligible now</div><div class="v">${o.counts.eligible} / ${o.counts.evaluated}</div><div class="s">strategies clearing edge and confidence bars</div></div>
@@ -83,8 +83,8 @@ async function dashboard() {
     <div class="t">${d.no_trade ? "NO TRADE" : esc(d.strategy)}</div><div class="r">${esc(d.reason)}</div></div>
   <div class="note" style="margin:-6px 0 16px">A decision is not an order: it still has to pass the independent risk engine and a real setup must trigger.</div>
   <div class="cols"><div><h2>Strategy ranking</h2>${rankingTable(o.strategies, { why: false, click: true })}</div>
-    <div class="card"><h2>Regime probabilities</h2>${probs.map(([n, p], i) => `<div class="prob ${i === 0 ? "top" : ""}"><span>${esc(title(n))}</span><div class="bar"><div style="width:${(p * 100).toFixed(1)}%"></div></div><span class="n">${(p * 100).toFixed(0)}%</span></div>`).join("")}
-    <div class="note">Rule-based classifier; probabilities are not calibrated against outcomes.</div></div></div>`;
+    <div class="card"><h2>Regime scores</h2>${probs.map(([n, p], i) => `<div class="prob ${i === 0 ? "top" : ""}"><span>${esc(title(n))}</span><div class="bar"><div style="width:${(p * 100).toFixed(1)}%"></div></div><span class="n">${(p * 100).toFixed(0)}%</span></div>`).join("")}
+    <div class="note">Normalised rule-based scores, not calibrated probabilities. Regimes overlap, and the regime is not used by the ranking.</div></div></div>`;
   view.querySelectorAll("tr.click").forEach((tr) => tr.addEventListener("click", () => { sessionStorage.setItem("strategy", tr.dataset.s); location.hash = "#/strategies"; }));
 }
 

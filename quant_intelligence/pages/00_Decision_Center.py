@@ -46,7 +46,7 @@ kpi_cards([
     {"label": "Data quality", "value": output.data_quality_status, "tone": "good" if quality_ok else "critical",
      "sub": f"{len(output.data_quality_issues or [])} issue(s)"},
     {"label": "Regime", "value": str(output.regime_label).replace("_", " ").title(),
-     "sub": f"{output.regime_confidence * 100:.0f}% model confidence"},
+     "sub": f"top score share {output.regime_confidence * 100:.0f}% (heuristic)"},
 ])
 for issue in output.data_quality_issues or []:
     st.warning(str(issue))

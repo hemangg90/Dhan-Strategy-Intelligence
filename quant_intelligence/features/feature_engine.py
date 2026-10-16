@@ -148,11 +148,12 @@ def compute_features(df: pd.DataFrame, profile: MarketProfile = NSE) -> pd.DataF
 
     or_window = df.assign(_sess=session_group, _mins=minutes_since_open)
     or_mask = or_window["_mins"] <= 30
-    or_high = high.where(or_mask).groupby(session_group).transform("max")
-    or_low = low.where(or_mask).groupby(session_group).transform("min")
-    # Forward-fill within session only, so OR is available for the rest of the session
-    out["opening_range_high"] = or_high.groupby(session_group).transform(lambda s: s.ffill())
-    out["opening_range_low"] = or_low.groupby(session_group).transform(lambda s: s.ffill())
+    # Causal opening range: a RUNNING max/min of the bars seen so far inside the first 30 minutes, then held for the
+    # rest of the session. (A whole-session max would expose the completed range to bars still inside the window.)
+    or_high = high.where(or_mask).groupby(session_group).cummax()
+    or_low = low.where(or_mask).groupby(session_group).cummin()
+    out["opening_range_high"] = or_high.groupby(session_group).ffill()
+    out["opening_range_low"] = or_low.groupby(session_group).ffill()
 
     prev_session_close = close.groupby(session_group).transform("last").shift(1)
     session_open_price = open_.groupby(session_group).transform("first")

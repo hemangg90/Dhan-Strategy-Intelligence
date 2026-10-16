@@ -6,8 +6,6 @@ from __future__ import annotations
 
 import datetime as dt
 import math
-import threading
-import time
 
 import numpy as np
 import pandas as pd
@@ -18,9 +16,6 @@ from quant_intelligence.risk.risk_engine import MAX_QUOTE_AGE_SEC, MAX_SLIPPAGE_
 from quant_intelligence.ui import backtest_workbench as wb
 from quant_intelligence.ui.decision_view import explanation_rows, global_rows
 from quant_intelligence.utils.timeutil import now_ist
-
-PIPELINE_TTL_SEC = 60.0
-LOOKBACK_DAYS = 60
 
 
 def clean(obj):
@@ -50,69 +45,8 @@ def clean(obj):
 
 
 # ---------------------------------------------------------------------------- pipeline cache
-class PipelineCache:
-    """Shares one pipeline result per (instrument, timeframe).
-
-    Stale-while-revalidate: once a result exists it is returned immediately, and if it is older than the TTL a
-    single background thread recomputes it. Only the very first request (or `force`) waits for a run, so a
-    ~30 s pipeline never blocks the page after warm-up. Every result carries its own bar timestamp, so the UI
-    always shows how old the data really is.
-    """
-
-    def __init__(self, runner=None, ttl: float = PIPELINE_TTL_SEC):
-        self._runner = runner
-        self._ttl = ttl
-        self._lock = threading.Lock()  # guards the dict and the "refreshing" set
-        self._run_lock = threading.Lock()  # one pipeline run at a time
-        self._items: dict[tuple, tuple[float, object]] = {}
-        self._refreshing: set[tuple] = set()
-        self.last_error: str | None = None
-
-    def _compute(self, key):
-        runner = self._runner
-        if runner is None:
-            from quant_intelligence.research.pipeline import run_pipeline as runner
-        end = now_ist()
-        with self._run_lock:
-            output = runner(key[0], key[1], end - dt.timedelta(days=LOOKBACK_DAYS), end)
-        with self._lock:
-            self._items[key] = (time.monotonic(), output)
-            self.last_error = None
-        return output
-
-    def _refresh_in_background(self, key):
-        with self._lock:
-            if key in self._refreshing:
-                return
-            self._refreshing.add(key)
-
-        def work():
-            try:
-                self._compute(key)
-            except Exception as exc:  # keep serving the previous result
-                self.last_error = str(exc)
-            finally:
-                with self._lock:
-                    self._refreshing.discard(key)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def get(self, instrument: str, timeframe: str, force: bool = False):
-        key = (instrument.upper(), timeframe)
-        with self._lock:
-            hit = self._items.get(key)
-        if hit and not force:
-            if time.monotonic() - hit[0] >= self._ttl:
-                self._refresh_in_background(key)
-            return hit[1]
-        return self._compute(key)
-
-    def warm(self, instrument: str = "NIFTY", timeframe: str = "5min") -> None:
-        """Compute the default view in the background so the first visitor does not wait."""
-        self._refresh_in_background((instrument.upper(), timeframe))
-
-
-PIPELINE = PipelineCache()
+# Shared with the Streamlit app: see research/shared_cache.py.
+from quant_intelligence.research.shared_cache import LOOKBACK_DAYS, PIPELINE, PIPELINE_TTL_SEC, PipelineCache  # noqa: E402,F401
 
 
 # ---------------------------------------------------------------------------- views
@@ -163,8 +97,7 @@ def strategy_detail(output, name: str) -> dict | None:
         "name": name,
         "ranking": row,
         "global_backtest": glob,
-        # Per-trade Sharpe/Sortino are annualised incorrectly in the backtester, so they are not shown.
-        "global_metrics": {k: v for k, v in (si.global_metrics or {}).items() if k not in ("sharpe", "sortino")},
+        "global_metrics": si.global_metrics,
         "conditional_metrics": si.conditional_metrics,
         "score_components": si.score.components,
         "note": "Historical statistics from past trades, net of modelled costs where stated. Not a prediction.",

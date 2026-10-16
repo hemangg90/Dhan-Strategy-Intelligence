@@ -67,12 +67,25 @@ def _flight_lock(instrument: str, timeframe: str) -> threading.RLock:
         return _flights.setdefault((instrument, timeframe), threading.RLock())
 
 
+def _replace_with_retry(src: Path, dst: Path, attempts: int = 12) -> None:
+    """os.replace, retried briefly on PermissionError: on Windows the rename fails while another thread has the
+    destination open for reading (e.g. a page reading the same candles). The reader finishes within milliseconds."""
+    for attempt in range(1, attempts + 1):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == attempts:
+                raise
+            time.sleep(0.02 * attempt)
+
+
 def _write_cache(df: pd.DataFrame, path: Path) -> None:
     """Atomic: write beside the target, then rename over it, so a reader never sees a partial file."""
     tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     try:
         df.to_parquet(tmp, index=False)
-        os.replace(tmp, path)
+        _replace_with_retry(tmp, path)
     finally:
         if tmp.exists():
             tmp.unlink(missing_ok=True)
@@ -81,7 +94,14 @@ def _write_cache(df: pd.DataFrame, path: Path) -> None:
 def _read_cache(path: Path) -> pd.DataFrame | None:
     """The cached candles, or None if the file is unreadable (then it is simply fetched again)."""
     try:
-        cached = pd.read_parquet(path)
+        for attempt in range(1, 9):
+            try:
+                cached = pd.read_parquet(path)
+                break
+            except PermissionError:  # Windows: the file is being swapped by a writer right now; try again shortly
+                if attempt == 8:
+                    raise
+                time.sleep(0.02 * attempt)
         cached["timestamp"] = pd.to_datetime(cached["timestamp"])
         return cached
     except Exception as e:

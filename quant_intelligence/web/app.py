@@ -7,6 +7,7 @@ There are deliberately no order endpoints: the website can only read research, r
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import plotly
@@ -21,13 +22,14 @@ STATIC = Path(__file__).resolve().parent / "static"
 # Plotly ships its browser bundle inside the python package, so the site works with no internet access.
 PLOTLY_JS = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.min.js"
 
-app = FastAPI(title="Nifty Intelligence", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    service.PIPELINE.warm()  # compute the default view in the background so the first visitor does not wait
+    yield
+
+
+app = FastAPI(title="Nifty Intelligence", docs_url=None, redoc_url=None, lifespan=_lifespan)
 init_db()
-
-
-@app.on_event("startup")
-def _warm() -> None:
-    service.PIPELINE.warm()
 
 
 def _output(instrument: str, timeframe: str, refresh: bool):

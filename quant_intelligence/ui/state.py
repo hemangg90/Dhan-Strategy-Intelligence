@@ -132,14 +132,32 @@ def get_account_state() -> AccountState:
     return ENGINE.account_state()
 
 
+_live_peak_equity = 0.0  # the live account's own high-water mark; never mixed with the paper engine's
+
+
+def live_day_pnl(positions: list[dict]) -> float | None:
+    """Today's P&L (realised + unrealised) from the broker's own position rows, or None if any row lacks the figures.
+    Never falls back to the paper engine's P&L: that belongs to a different account."""
+    total = 0.0
+    for p in positions:
+        realised, unrealised = p.get("realizedProfit"), p.get("unrealizedProfit")
+        if realised is None or unrealised is None:
+            return None
+        total += float(realised) + float(unrealised)
+    return total
+
+
 def get_live_account_state(broker) -> AccountState:
     """AccountState for the live Dhan broker, using real fund/position data instead of
     the PaperBroker's in-memory book. `broker` is a DhanBroker."""
+    global _live_peak_equity
     fund = broker.get_fund_limit()
     equity = fund.get("availabelBalance", 0.0)
-    ENGINE.peak_equity = max(ENGINE.peak_equity, equity)
+    _live_peak_equity = max(_live_peak_equity, equity)
 
-    open_positions = [p for p in broker.get_positions() if p.get("netQty", 0) != 0]
+    all_positions = broker.get_positions()
+    day_pnl = live_day_pnl(all_positions)
+    open_positions = [p for p in all_positions if p.get("netQty", 0) != 0]
     exposure_by_strategy: dict[str, float] = {}
     total_exposure = 0.0
     open_summary = []
@@ -151,8 +169,9 @@ def get_live_account_state(broker) -> AccountState:
 
     return AccountState(
         equity=equity,
-        peak_equity=ENGINE.peak_equity,
-        daily_pnl=ENGINE.daily_pnl,
+        peak_equity=_live_peak_equity,
+        daily_pnl=day_pnl if day_pnl is not None else 0.0,
+        daily_pnl_known=day_pnl is not None,
         open_positions_count=len(open_positions),
         trades_today=ENGINE.trades_today,
         exposure_by_strategy=exposure_by_strategy,
@@ -182,7 +201,7 @@ def live_position_view(p: dict) -> dict:
 
 
 def run_pipeline_cached(force: bool = False):
-    from quant_intelligence.research.pipeline import run_pipeline
+    from quant_intelligence.research.shared_cache import PIPELINE
 
     cached = st.session_state["pipeline_output"]
     if cached is not None and not force:
@@ -193,11 +212,11 @@ def run_pipeline_cached(force: bool = False):
         if why is None:
             return cached
 
-    end = now_ist()
-    start = end - dt.timedelta(days=st.session_state["lookback_days"])
-
     try:
-        output = run_pipeline(st.session_state["instrument"], st.session_state["timeframe"], start, end)
+        # The process-wide cache serves a warm result at once (a new tab or a refresh does not re-run the ~40 s
+        # pipeline) and recomputes in the background when it is older than its TTL. `force` waits for a fresh run.
+        output = PIPELINE.get(st.session_state["instrument"], st.session_state["timeframe"], force=force,
+                              lookback_days=st.session_state["lookback_days"])
         st.session_state["pipeline_output"] = output
         st.session_state["pipeline_error"] = None
         st.session_state["pipeline_ran_at"] = time.monotonic()

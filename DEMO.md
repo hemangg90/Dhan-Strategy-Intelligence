@@ -1,85 +1,84 @@
-# Demo guide: Nifty Intelligence (Dhan Dev)
+# Demo runbook: Nifty Intelligence
 
-All results shown are **historical statistics, not predictions**. The walk-forward evaluation in this repo has not
-shown the selector beating a random pick; say so if asked. Orders are paper-only; live placement is locked.
+Every figure shown is a **historical statistic, not a prediction**. Paper trading only; live orders are locked.
+If asked: the selector has **not** been shown to beat a random pick (see `docs/SELECTOR_EVALUATION.md`: 55 trades, mean
++0.011 R, 95 % CI -0.29 to +0.34). Say so; it is the honest result and the strongest thing you can say about the project.
 
-## Before going on stage
+## 1. The day before and the morning of
 
-1. Generate a fresh Dhan access token (tokens last about 24 h) and enter it in `.env` (`DHAN_ACCESS_TOKEN`).
-   **The token in `.env` expired on 30 Sep**; until it is renewed the app shows 16-day-old cached bars and NO TRADE.
-2. Run the checklist from the project root:
+1. **Renew the Dhan token** (they last about 24 h; the check below tells you when it expires) and put it in `.env`
+   as `DHAN_ACCESS_TOKEN`. If you renew the evening before, it can expire around the time you present: **renew again on the
+   morning of the demo**.
+2. From the project root:
 
    ```
    python scripts/demo_preflight.py
    ```
 
-   It must end with `PREFLIGHT OK`. It checks the lockdown flag, the closed live-order gate, token validity,
-   database access, and how old the cached NIFTY / BANKNIFTY candles are. It never prints credentials.
-3. Warm the data: open the app once (below) about 10 minutes early so the candle cache refreshes from Dhan.
-4. Close other windows and hide the browser's saved-password and bookmarks bars.
+   It must end with `PREFLIGHT OK`. It checks the lockdown flag, the closed live-order gate, token validity and time to
+   expiry, database access and how old the cached NIFTY / BANKNIFTY candles are. It never prints credentials.
+3. **Market hours:** NSE is closed on Saturdays. On a closed day the app correctly shows the **last session's** data
+   ("last bar ... N hours old"). It is still a valid demo of research, ranking, risk and reports, but there are no new
+   signals and no auto-trading. Do not describe closed-market data as live.
+4. Close other windows. Hide the browser bookmarks bar and saved-password prompts.
 
-## Start command
-
-PowerShell, from the project root:
+## 2. Start (PowerShell, project root)
 
 ```
 $env:DEMO_LOCKDOWN = "1"
 streamlit run quant_intelligence/app.py
 ```
 
-Open http://localhost:8501. `DEMO_LOCKDOWN=1` forces paper mode regardless of `.env`, blocks `DhanBroker.place_order`,
-and hides the client ID, token and credential form.
+Open http://localhost:8501. **Open it once about two minutes early**: the research pipeline (about 40 s) is computed
+once in the background at startup and then shared, so later refreshes and new tabs load immediately.
 
-## Website (recommended for the stage)
+`DEMO_LOCKDOWN=1` forces paper mode regardless of `.env`, blocks `DhanBroker.place_order`, and hides the client ID, the
+token (not even its last characters) and the credential form.
 
-A read-only website (top navigation: Dashboard, Strategies, Backtests, Risk, Method) runs on the same research core.
-It has no order endpoints at all.
+**Alternative: the read-only website** (top navigation: Dashboard, Strategies, Backtests, Risk, Method):
 
 ```
 $env:DEMO_LOCKDOWN = "1"
 python -m uvicorn quant_intelligence.web.app:app --port 8000
 ```
 
-Open http://localhost:8000. The default view is computed in the background at startup (about 30-40 seconds), so start
-it a few minutes early; later refreshes never block the page. The Streamlit app above remains as a fallback.
+It has no order endpoints at all. Open http://localhost:8000.
 
-## Five-minute sequence
+## 3. Five-minute sequence (Streamlit top bar: five workspaces)
 
-| Min | Page | Say / show |
+| Min | Where | Say / show |
 |---|---|---|
-| 0:00 | Status bar (top) | Market open/closed, Dhan connection, newest bar time. "Paper mode, live orders locked." |
-| 0:30 | **Decision Center**, section 1 | Instrument, last bar, data age, data quality. If data is stale the app says so and refuses to trade. |
-| 1:15 | Decision Center, section 2 | The decision. NO TRADE is a first-class outcome and it shows its reason. |
-| 2:00 | Decision Center, section 3 | Why each of the 17 strategies is selected, eligible or rejected: net expectancy, standard error, win rate, sample size, distinct days, drawdown. Chain-aware strategies are marked as unrankable (no historical setups). |
-| 3:00 | Strategy Intelligence | Pick one strategy: global (gross) vs conditional (net) statistics. Historical analogues page for the matched past states. |
-| 3:45 | Decision Center, section 4, then Risk Control | The independent risk engine: it never sees the ranking. Show a recent veto reason from Risk Control. |
-| 4:30 | Research Reports / Backtest Lab | In-sample vs out-of-sample split and the honest "no proven edge versus random" result. |
+| 0:00 | **Market Intelligence > Dashboard** | Chips: data quality, PAPER MODE, LIVE ORDERS LOCKED. Last bar and its age. "The system first asks: is the data valid and current?" |
+| 0:45 | Dashboard, decision banner | NO TRADE / SELECTED / **TIE-BREAK** with the actual reason. If TIE-BREAK: "the top two are statistically tied, so this is flagged and sized down; it carries no demonstrated edge." A decision is *not* an order. |
+| 1:30 | **Strategy Intelligence > Decision Center** | Why each of the 17 strategies is selected, eligible or rejected: net expectancy, standard error, win rate, sample size, distinct days. The four option-chain strategies say "needs a live option chain". |
+| 2:30 | **Research Lab > Historical Analogues**, then **Backtest Workbench** | "How did this strategy behave in similar past states?"; stored runs, equity curve, drawdown, daily returns. |
+| 3:30 | **Risk & Execution > Risk Control** | The independent risk engine: it never sees the ranking; any failed mandatory check means NO TRADE. Show a recent verdict and reason. |
+| 4:15 | **Performance & Reports > Daily Report** / Research Reports | Real stored results, traceable. |
+| 4:45 | Close | Limits: no proven edge, modelled option costs, paper only. |
 
-To show a risk veto live without trading, use Paper Trading and size a trade far above the per-trade risk limit; the
-engine vetoes it with the exact reason.
+To show a risk veto without trading: **Risk & Execution > Paper Trading**, size a trade far above the per-trade risk
+limit; the engine vetoes it with the exact reason.
 
-## Troubleshooting
+## 4. If something fails (fallbacks)
 
 | Symptom | Cause / fix |
 |---|---|
-| Everything says NO TRADE, "data is stale" | Token expired or market closed. Renew the token, press **Refresh pipeline** in the sidebar. |
-| "Your Dhan access token expired" | Generate a new token in Dhan, update `.env`, restart the app. |
-| Rate-limit banner in the sidebar | Dhan paused requests; wait a minute and press Refresh pipeline. The cache keeps working. |
-| Port 8501 busy | `streamlit run quant_intelligence/app.py --server.port 8502` |
-| `ModuleNotFoundError` | Run from the project root with the virtualenv active; `pip install -r requirements.txt`. |
-| Page shows "Pipeline could not run" | No cached data and Dhan unreachable. Fix the network or token; there is intentionally no synthetic fallback. |
+| "Data DEGRADED", "stale", NO TRADE for data reasons | Token expired or feed down. Renew the token, press **Refresh pipeline** (sidebar). This is also a good demonstration that the system refuses to trade on bad data: say so. |
+| "Your Dhan access token expired" | Generate a new token, update `.env`, restart the app. |
+| Rate-limit banner | Dhan paused requests; wait a minute, press **Refresh pipeline**. Cached candles keep working. |
+| Page stuck on "Running initial pipeline" > 90 s | The first computation is still running or the network is slow. Wait; or switch to the website (`:8000`), which serves the last computed result. |
+| Port busy | Add `--server.port 8502` (Streamlit) or `--port 8001` (website). |
+| `ModuleNotFoundError` | Run from the project root with the virtualenv active: `pip install -r requirements.txt`. |
+| No internet at the venue | The app and website work from cached candles (the website serves Plotly from the installed package). Data will be as old as the cache and labelled so. |
+| Complete failure | Show `docs/SELECTOR_EVALUATION.md` and `docs/PROJECT_AUDIT.md` on screen: real, traceable results and a candid account of what is and is not validated. |
 
-## Verification record (this build)
+## 5. What not to claim
 
-- Baseline before changes: 532 tests passed; all 17 pages rendered without exceptions (`scripts/ui_smoke_test.py`).
-- The suite and smoke test are re-run after changes; see the final report for the current counts.
-- No live trades are ever placed by the test suite; `DhanBroker` is mocked.
+* Not "validated", not "profitable", not "predicts the market". The selector's advantage over chance is **not established**.
+* Not "live trading ready": the live path has never run against a funded account.
+* Backtest option costs and premiums are **modelled**, not real fills.
+* Regime figures are heuristic scores, not calibrated probabilities.
 
-## Known limitations
+## 6. Known limitations
 
-- Live-Dhan-only: if the token or network fails, the demo shows NO TRADE on stale data (by design).
-- No demonstrated edge over a random pick; tie-break picks carry no evidence of an edge.
-- Option premiums in backtests are modelled (fixed percentage / delta or Black-Scholes), not real option history.
-- PCR, OI-buildup, IV-crush and unusual-volume strategies have no historical setups and are never ranked.
-- Regime probabilities are not calibrated.
-- The live Dhan order path has not been exercised against a funded account.
+See `README.md` ("Known limitations") and `docs/PROJECT_AUDIT.md` section 5 for the complete, current list.

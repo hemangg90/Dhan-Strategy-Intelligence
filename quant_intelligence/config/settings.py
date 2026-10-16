@@ -176,7 +176,8 @@ class Settings:
     # anyway - tagged "TIE-BREAK" and sized down - instead of standing aside. Live trading stays manual
     # (confirmation + risk engine + double gate); this only decides whether the tied pick is offered.
     tie_break_paper: bool = _bool_env("TIE_BREAK_PAPER", True)
-    tie_break_live: bool = _bool_env("TIE_BREAK_LIVE", True)
+    # Off by default: a tie-break pick has no demonstrated edge, so it is never sent to a live account unless explicitly enabled.
+    tie_break_live: bool = _bool_env("TIE_BREAK_LIVE", False)
     tie_break_size_factor: float = _float_env("TIE_BREAK_SIZE_FACTOR", 0.5)
 
     # Background data keeper: refreshes every watchlist instrument's candles on its own (data/data_keeper.py).

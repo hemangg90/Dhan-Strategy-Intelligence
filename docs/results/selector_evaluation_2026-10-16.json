@@ -1,0 +1,414 @@
+{
+  "per_symbol": {
+    "NIFTY": {
+      "decision_points": 610,
+      "no_trade_points": 150,
+      "selected_but_no_setup": 419,
+      "trades_taken": 41,
+      "avg_signals_per_point": 1.1885245901639345,
+      "selected_mean_net_r": 0.134346066557965,
+      "selected_win_rate": 0.43902439024390244,
+      "random_pick_mean_net_r": 0.140033637120327,
+      "lift_vs_random_pick": -0.005687570562361961,
+      "selected_mean_net_r_ci95": [
+        -0.3608119729978002,
+        0.6271564304134404
+      ],
+      "lift_ci95": [
+        -0.14539925648561564,
+        0.14158825192343896
+      ],
+      "avoided_by_no_trade_mean_net_r": -0.2709262993284913,
+      "take_every_signal_mean_net_r": -0.20081776459324882,
+      "baselines": {
+        "fixed_best_on_warmup": {
+          "n_trades": 67,
+          "mean_net_r": 0.1324428371890144,
+          "win_rate": 0.43283582089552236,
+          "profit_factor": 1.1985925965405733,
+          "total_net_r": 8.873670091663964,
+          "max_drawdown_r": -9.046584947048517,
+          "mean_net_r_ci95": [
+            -0.2568344979613274,
+            0.49814493879735267
+          ]
+        },
+        "regime_based": {
+          "n_trades": 142,
+          "mean_net_r": -0.07449036269596962,
+          "win_rate": 0.4154929577464789,
+          "profit_factor": 0.9014575028199394,
+          "total_net_r": -10.577631502827685,
+          "max_drawdown_r": -26.93425333487927,
+          "mean_net_r_ci95": [
+            -0.37371028184418237,
+            0.20853012396420684
+          ]
+        },
+        "random_pick_every_signal": {
+          "n_trades": 610,
+          "mean_net_r": -0.20081776459324882,
+          "win_rate": 0.36885245901639346,
+          "profit_factor": 0.7549038156422461,
+          "total_net_r": -122.49883640188179,
+          "max_drawdown_r": -147.04137613136012,
+          "mean_net_r_ci95": [
+            -0.3507221470132909,
+            -0.04846919042198908
+          ]
+        }
+      },
+      "selector_trade_stats": {
+        "n_trades": 41,
+        "mean_net_r": 0.134346066557965,
+        "win_rate": 0.43902439024390244,
+        "profit_factor": 1.199373033087589,
+        "total_net_r": 5.508188728876565,
+        "max_drawdown_r": -9.046584947048517,
+        "mean_net_r_ci95": [
+          -0.3608119729978002,
+          0.6271564304134404
+        ]
+      },
+      "by_strategy": {
+        "Gap Fill Reversion": {
+          "n_trades": 1,
+          "mean_net_r": -1.1009859344625943,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "total_net_r": -1.1009859344625943,
+          "max_drawdown_r": 0.0
+        },
+        "Momentum": {
+          "n_trades": 40,
+          "mean_net_r": 0.16522936658347903,
+          "win_rate": 0.45,
+          "profit_factor": 1.2491530484820774,
+          "total_net_r": 6.609174663339161,
+          "max_drawdown_r": -9.046584947048517
+        }
+      },
+      "by_regime": {
+        "COMPRESSION": {
+          "n_trades": 1,
+          "mean_net_r": 1.7970023624176814,
+          "win_rate": 1.0,
+          "profit_factor": null,
+          "total_net_r": 1.7970023624176814,
+          "max_drawdown_r": 0.0
+        },
+        "HIGH_VOL": {
+          "n_trades": 18,
+          "mean_net_r": 0.5287976762733549,
+          "win_rate": 0.5555555555555556,
+          "profit_factor": 2.0606805413349423,
+          "total_net_r": 9.518358172920388,
+          "max_drawdown_r": -4.5626751717391105
+        },
+        "LOW_VOL": {
+          "n_trades": 2,
+          "mean_net_r": 0.27486817830452925,
+          "win_rate": 0.5,
+          "profit_factor": 1.431209104990096,
+          "total_net_r": 0.5497363566090585,
+          "max_drawdown_r": 0.0
+        },
+        "RANGE": {
+          "n_trades": 10,
+          "mean_net_r": -0.2616554902736966,
+          "win_rate": 0.3,
+          "profit_factor": 0.6753074103078653,
+          "total_net_r": -2.616554902736966,
+          "max_drawdown_r": -3.949242098095853
+        },
+        "VOL_EXPANSION": {
+          "n_trades": 10,
+          "mean_net_r": -0.3740353260333595,
+          "win_rate": 0.3,
+          "profit_factor": 0.5986873399631002,
+          "total_net_r": -3.740353260333595,
+          "max_drawdown_r": -6.346956618555149
+        }
+      },
+      "trading_days": 32,
+      "trades_per_trading_day": 1.28125,
+      "exposure_fraction_of_decision_points": 0.06721311475409836
+    },
+    "BANKNIFTY": {
+      "decision_points": 468,
+      "no_trade_points": 354,
+      "selected_but_no_setup": 100,
+      "trades_taken": 14,
+      "avg_signals_per_point": 1.2115384615384615,
+      "selected_mean_net_r": -0.3521093366288764,
+      "selected_win_rate": 0.2857142857142857,
+      "random_pick_mean_net_r": -0.3740228259537767,
+      "lift_vs_random_pick": 0.021913489324900354,
+      "selected_mean_net_r_ci95": [
+        -1.1208476836134313,
+        0.22823737360011792
+      ],
+      "lift_ci95": [
+        -0.11794975175015113,
+        0.14419973900477578
+      ],
+      "avoided_by_no_trade_mean_net_r": -0.38949731666201903,
+      "take_every_signal_mean_net_r": -0.3271326943738433,
+      "baselines": {
+        "fixed_best_on_warmup": {
+          "n_trades": 43,
+          "mean_net_r": -0.44826688063018555,
+          "win_rate": 0.2558139534883721,
+          "profit_factor": 0.5144855578290846,
+          "total_net_r": -19.275475867097978,
+          "max_drawdown_r": -21.863896866053125,
+          "mean_net_r_ci95": [
+            -0.8984092172712407,
+            0.007486317965893159
+          ]
+        },
+        "regime_based": {
+          "n_trades": 92,
+          "mean_net_r": -0.3110999128953605,
+          "win_rate": 0.33695652173913043,
+          "profit_factor": 0.6716323417481681,
+          "total_net_r": -28.621191986373162,
+          "max_drawdown_r": -27.5212472192746,
+          "mean_net_r_ci95": [
+            -0.7932314726238581,
+            0.18073927753460667
+          ]
+        },
+        "random_pick_every_signal": {
+          "n_trades": 468,
+          "mean_net_r": -0.3271326943738433,
+          "win_rate": 0.3418803418803419,
+          "profit_factor": 0.6242266383439798,
+          "total_net_r": -153.09810096695867,
+          "max_drawdown_r": -156.08147741519855,
+          "mean_net_r_ci95": [
+            -0.5915267791940761,
+            -0.13290243408068264
+          ]
+        }
+      },
+      "selector_trade_stats": {
+        "n_trades": 14,
+        "mean_net_r": -0.3521093366288764,
+        "win_rate": 0.2857142857142857,
+        "profit_factor": 0.6295155302474338,
+        "total_net_r": -4.92953071280427,
+        "max_drawdown_r": -6.741811933228639,
+        "mean_net_r_ci95": [
+          -1.1208476836134313,
+          0.22823737360011792
+        ]
+      },
+      "by_strategy": {
+        "CPR Breakout": {
+          "n_trades": 8,
+          "mean_net_r": -0.3926221039989348,
+          "win_rate": 0.25,
+          "profit_factor": 0.5417326451925598,
+          "total_net_r": -3.1409768319914786,
+          "max_drawdown_r": -4.953258052415848
+        },
+        "Inside Bar Breakout": {
+          "n_trades": 6,
+          "mean_net_r": -0.29809231346879855,
+          "win_rate": 0.3333333333333333,
+          "profit_factor": 0.7227738888249501,
+          "total_net_r": -1.7885538808127912,
+          "max_drawdown_r": -4.159107191345892
+        }
+      },
+      "by_regime": {
+        "COMPRESSION": {
+          "n_trades": 2,
+          "mean_net_r": 0.34794758029395556,
+          "win_rate": 0.5,
+          "profit_factor": 1.6233463365619725,
+          "total_net_r": 0.6958951605879111,
+          "max_drawdown_r": -1.1163860598364581
+        },
+        "HIGH_VOL": {
+          "n_trades": 4,
+          "mean_net_r": 0.4064833732682806,
+          "win_rate": 0.5,
+          "profit_factor": 1.7295196256508891,
+          "total_net_r": 1.6259334930731224,
+          "max_drawdown_r": -1.09238001273953
+        },
+        "RANGE": {
+          "n_trades": 7,
+          "mean_net_r": -0.8714336276292707,
+          "win_rate": 0.14285714285714285,
+          "profit_factor": 0.3075342498572517,
+          "total_net_r": -6.1000353934048945,
+          "max_drawdown_r": -5.293303450508927
+        },
+        "VOL_EXPANSION": {
+          "n_trades": 1,
+          "mean_net_r": -1.1513239730604081,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "total_net_r": -1.1513239730604081,
+          "max_drawdown_r": 0.0
+        }
+      },
+      "trading_days": 25,
+      "trades_per_trading_day": 0.56,
+      "exposure_fraction_of_decision_points": 0.029914529914529916
+    }
+  },
+  "overall": {
+    "decision_points": 1078,
+    "no_trade_points": 504,
+    "selected_but_no_setup": 519,
+    "trades_taken": 55,
+    "avg_signals_per_point": 1.1985157699443414,
+    "selected_mean_net_r": 0.010521054837678094,
+    "selected_win_rate": 0.4,
+    "random_pick_mean_net_r": 0.009182901065100597,
+    "lift_vs_random_pick": 0.0013381537725775368,
+    "selected_mean_net_r_ci95": [
+      -0.29161013433598915,
+      0.33924785183732625
+    ],
+    "lift_ci95": [
+      -0.11345687007766128,
+      0.1252487051315377
+    ],
+    "avoided_by_no_trade_mean_net_r": -0.3542083234079929,
+    "take_every_signal_mean_net_r": -0.2556557860564383,
+    "baselines": {
+      "fixed_best_on_warmup": {
+        "n_trades": 110,
+        "mean_net_r": -0.09456187068576379,
+        "win_rate": 0.36363636363636365,
+        "profit_factor": 0.8767323735168092,
+        "total_net_r": -10.401805775434017,
+        "max_drawdown_r": -21.86389686605312,
+        "mean_net_r_ci95": [
+          -0.4042114419546357,
+          0.27007544872507266
+        ]
+      },
+      "regime_based": {
+        "n_trades": 234,
+        "mean_net_r": -0.16751633969743956,
+        "win_rate": 0.38461538461538464,
+        "profit_factor": 0.7984665764927544,
+        "total_net_r": -39.198823489200855,
+        "max_drawdown_r": -41.44285657659481,
+        "mean_net_r_ci95": [
+          -0.3884651684573456,
+          0.09162684970701987
+        ]
+      },
+      "random_pick_every_signal": {
+        "n_trades": 1078,
+        "mean_net_r": -0.2556557860564383,
+        "win_rate": 0.35714285714285715,
+        "profit_factor": 0.6962183243125869,
+        "total_net_r": -275.5969373688405,
+        "max_drawdown_r": -279.3382876291239,
+        "mean_net_r_ci95": [
+          -0.4371068475830111,
+          -0.09561809127281004
+        ]
+      }
+    },
+    "selector_trade_stats": {
+      "n_trades": 55,
+      "mean_net_r": 0.010521054837678118,
+      "win_rate": 0.4,
+      "profit_factor": 1.0141366475987699,
+      "total_net_r": 0.5786580160722965,
+      "max_drawdown_r": -11.950539735259666,
+      "mean_net_r_ci95": [
+        -0.29161013433598915,
+        0.33924785183732625
+      ]
+    },
+    "by_strategy": {
+      "CPR Breakout": {
+        "n_trades": 8,
+        "mean_net_r": -0.3926221039989348,
+        "win_rate": 0.25,
+        "profit_factor": 0.5417326451925598,
+        "total_net_r": -3.1409768319914786,
+        "max_drawdown_r": -4.953258052415848
+      },
+      "Gap Fill Reversion": {
+        "n_trades": 1,
+        "mean_net_r": -1.1009859344625943,
+        "win_rate": 0.0,
+        "profit_factor": 0.0,
+        "total_net_r": -1.1009859344625943,
+        "max_drawdown_r": 0.0
+      },
+      "Inside Bar Breakout": {
+        "n_trades": 6,
+        "mean_net_r": -0.29809231346879855,
+        "win_rate": 0.3333333333333333,
+        "profit_factor": 0.7227738888249501,
+        "total_net_r": -1.7885538808127912,
+        "max_drawdown_r": -4.159107191345892
+      },
+      "Momentum": {
+        "n_trades": 40,
+        "mean_net_r": 0.16522936658347903,
+        "win_rate": 0.45,
+        "profit_factor": 1.2491530484820774,
+        "total_net_r": 6.609174663339161,
+        "max_drawdown_r": -9.046584947048517
+      }
+    },
+    "by_regime": {
+      "COMPRESSION": {
+        "n_trades": 3,
+        "mean_net_r": 0.8309658410018642,
+        "win_rate": 0.6666666666666666,
+        "profit_factor": 3.2330066745645163,
+        "total_net_r": 2.4928975230055928,
+        "max_drawdown_r": -1.116386059836458
+      },
+      "HIGH_VOL": {
+        "n_trades": 22,
+        "mean_net_r": 0.5065587120906141,
+        "win_rate": 0.5454545454545454,
+        "profit_factor": 1.9947955865464488,
+        "total_net_r": 11.14429166599351,
+        "max_drawdown_r": -4.5626751717391105
+      },
+      "LOW_VOL": {
+        "n_trades": 2,
+        "mean_net_r": 0.27486817830452925,
+        "win_rate": 0.5,
+        "profit_factor": 1.431209104990096,
+        "total_net_r": 0.5497363566090585,
+        "max_drawdown_r": 0.0
+      },
+      "RANGE": {
+        "n_trades": 17,
+        "mean_net_r": -0.5127406056554036,
+        "win_rate": 0.23529411764705882,
+        "profit_factor": 0.48323812461103244,
+        "total_net_r": -8.716590296141861,
+        "max_drawdown_r": -10.049277491500748
+      },
+      "VOL_EXPANSION": {
+        "n_trades": 11,
+        "mean_net_r": -0.44469793030854576,
+        "win_rate": 0.2727272727272727,
+        "profit_factor": 0.5328634263880777,
+        "total_net_r": -4.891677233394003,
+        "max_drawdown_r": -6.346956618555149
+      }
+    },
+    "trading_days": 37,
+    "trades_per_trading_day": 1.4864864864864864,
+    "exposure_fraction_of_decision_points": 0.05102040816326531
+  }
+}

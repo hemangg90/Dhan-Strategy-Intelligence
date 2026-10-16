@@ -9,6 +9,15 @@ No look-ahead: each strategy is back-tested once over the whole series, but the 
 only sees trades that had already CLOSED by t (exit <= t) and were entered before t. It goes
 through the same code as the live pipeline (research/ranking_core.py).
 
+Baselines (each sees only information available at its decision time):
+  random pick   - the mean of every strategy that has a setup at t (what an uninformed choice earns);
+  fixed best    - the single strategy with the best net expectancy over the WARM-UP period only, traded whenever
+                  it has a setup (chosen before the evaluation period starts, never on the test data);
+  regime-based  - at t, among strategies with a setup, the one whose already-closed trades in the CURRENT regime
+                  label have the best positive mean net R (needs MIN_REGIME_TRADES), else it abstains.
+Trades from consecutive decision points can overlap in time; confidence intervals therefore resample whole trading
+days, but they remain approximate and the samples are small. Treat every figure as descriptive, not proof of an edge.
+
 Run:  python -m quant_intelligence.ranking.evaluate_ranker [SYMBOL ...] [--json out.json]
 Uses the real candles already cached in data_cache/parquet_cache (no network).
 """
@@ -25,12 +34,15 @@ from quant_intelligence.backtesting.engine import market_for, max_drawdown_in_r,
 from quant_intelligence.config.settings import DATA_CACHE_DIR, SETTINGS
 from quant_intelligence.features.feature_engine import compute_features
 from quant_intelligence.ranking.ranking_engine import rank_and_select
+from quant_intelligence.regimes.regime_engine import classify_regime
 from quant_intelligence.research.pipeline import _uses_volume, default_quantity
 from quant_intelligence.research.ranking_core import assess_observations, observations_from_trades
 from quant_intelligence.strategies.registry import get_all_strategies
 from quant_intelligence.utils.market_profile import profile_for
 
 ALLOW_TIE_BREAK = False  # set by --tie-break: also count the trades taken when the top strategies are tied
+MIN_REGIME_TRADES = 5  # regime baseline: closed trades needed in the current regime before it will pick a strategy
+MIN_TRAINING_TRADES = 10  # fixed baseline: warm-up trades a strategy needs to be eligible for selection
 
 
 @dataclass
@@ -42,6 +54,11 @@ class Decision:
     n_signals: int  # strategies with a setup at this bar
     selected_net_r: float | None  # net R of the selected strategy's trade at this bar (if it had one)
     pick_net_r: float  # mean net R over all strategies' trades at this bar (= picking one at random)
+    regime: str | None = None  # regime label at this bar (heuristic; display/analysis only)
+    fixed_strategy: str | None = None  # the strategy the fixed baseline chose on the warm-up period
+    fixed_net_r: float | None = None  # its net R at this bar, if it had a setup
+    regime_selected: str | None = None  # the regime baseline's pick (None = abstained)
+    regime_net_r: float | None = None  # its net R at this bar
 
 
 def evaluate_instrument(
@@ -75,7 +92,11 @@ def evaluate_instrument(
         entry_idx = np.array([ts_to_idx[t.setup.timestamp] for t in trades])
         exit_idx = np.array([ts_to_idx.get(t.exit_timestamp, len(ohlcv)) for t in trades])
         obs["entry_idx"], obs["exit_idx"] = entry_idx, exit_idx
+        entry_regimes = np.array([
+            classify_regime(features.iloc[int(i)].drop(labels=["timestamp"]).to_dict())[0] for i in entry_idx
+        ])
         per_strategy[strat.name] = {
+            "regimes": entry_regimes,
             "obs": obs,
             "entry_idx": entry_idx,
             "exit_idx": exit_idx,
@@ -87,6 +108,13 @@ def evaluate_instrument(
     signal_bars = sorted({i for d in per_strategy.values() for i in d["net_r"] if i >= start_idx})
     if max_points and len(signal_bars) > max_points:
         signal_bars = signal_bars[:: int(np.ceil(len(signal_bars) / max_points))]
+
+    # Fixed baseline: choose ONCE, from trades that had closed before the evaluation period began.
+    fixed_name, fixed_best = None, -np.inf
+    for name, d in per_strategy.items():
+        train = d["net_r_arr"][(d["exit_idx"] < start_idx) & (d["entry_idx"] < start_idx)]
+        if len(train) >= MIN_TRAINING_TRADES and train.mean() > fixed_best:
+            fixed_name, fixed_best = name, float(train.mean())
 
     decisions: list[Decision] = []
     for t in signal_bars:
@@ -100,6 +128,14 @@ def evaluate_instrument(
 
         at_t = {n: d["net_r"][t] for n, d in per_strategy.items() if t in d["net_r"]}
         selected = None if ranking.is_no_trade else ranking.selected_strategy
+
+        regime_now = classify_regime(current)[0]
+        regime_pick, regime_best = None, 0.0  # must beat zero expectancy to trade
+        for name in at_t:
+            d = per_strategy[name]
+            known = (d["exit_idx"] <= t) & (d["entry_idx"] < t) & (d["regimes"] == regime_now)
+            if known.sum() >= MIN_REGIME_TRADES and d["net_r_arr"][known].mean() > regime_best:
+                regime_pick, regime_best = name, float(d["net_r_arr"][known].mean())
         decisions.append(
             Decision(
                 instrument=instrument,
@@ -109,6 +145,11 @@ def evaluate_instrument(
                 n_signals=len(at_t),
                 selected_net_r=at_t.get(selected) if selected else None,
                 pick_net_r=float(np.mean(list(at_t.values()))),
+                regime=regime_now,
+                fixed_strategy=fixed_name,
+                fixed_net_r=at_t.get(fixed_name) if fixed_name else None,
+                regime_selected=regime_pick,
+                regime_net_r=at_t.get(regime_pick) if regime_pick else None,
             )
         )
     return decisions
@@ -159,7 +200,42 @@ def summarize(decisions: list[Decision]) -> dict:
     if len(no_trade):
         out["avoided_by_no_trade_mean_net_r"] = float(no_trade["pick_net_r"].mean())
     out["take_every_signal_mean_net_r"] = float(df["pick_net_r"].mean())
+
+    out["baselines"] = {
+        "fixed_best_on_warmup": _trade_stats(df["fixed_net_r"], df["day"]),
+        "regime_based": _trade_stats(df["regime_net_r"], df["day"]),
+        "random_pick_every_signal": _trade_stats(df["pick_net_r"], df["day"]),
+    }
+    if len(traded):
+        ordered = traded.sort_values("timestamp")
+        out["selector_trade_stats"] = _trade_stats(ordered["selected_net_r"], ordered["day"])
+        out["by_strategy"] = {k: _trade_stats(g["selected_net_r"], g["day"], ci=False) for k, g in traded.groupby("selected")}
+        out["by_regime"] = {str(k): _trade_stats(g["selected_net_r"], g["day"], ci=False) for k, g in traded.groupby("regime")}
+        out["trading_days"] = int(df["day"].nunique())
+        out["trades_per_trading_day"] = float(len(traded) / max(df["day"].nunique(), 1))
+        out["exposure_fraction_of_decision_points"] = float(len(traded) / len(df))
     return out
+
+
+def _trade_stats(net_r: pd.Series, days: pd.Series, ci: bool = True) -> dict:
+    """Descriptive statistics of a series of per-trade net R (NaN = no trade). Includes the sample size."""
+    mask = net_r.notna()
+    r = net_r[mask].to_numpy(dtype=float)
+    if len(r) == 0:
+        return {"n_trades": 0}
+    wins, losses = r[r > 0].sum(), -r[r < 0].sum()
+    equity = np.cumsum(r)
+    stats = {
+        "n_trades": int(len(r)),
+        "mean_net_r": float(r.mean()),
+        "win_rate": float((r > 0).mean()),
+        "profit_factor": float(wins / losses) if losses > 0 else None,
+        "total_net_r": float(r.sum()),
+        "max_drawdown_r": float((equity - np.maximum.accumulate(equity)).min()),
+    }
+    if ci:
+        stats["mean_net_r_ci95"] = _bootstrap_ci(r, days[mask].to_numpy())
+    return stats
 
 
 def load_cached_ohlcv(symbol: str, timeframe: str = "5min") -> pd.DataFrame | None:

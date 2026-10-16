@@ -57,13 +57,19 @@ def test_tie_break_never_overrides_safety_conditions():
 
 def test_tradable_honours_the_per_mode_switches(monkeypatch):
     d = rank_and_select(_tied_scores(), allow_tie_break=True)
-    assert tradable(d, "PAPER") == (True, None) and tradable(d, "LIVE") == (True, None)  # both default on
-
-    off = dataclasses.replace(settings_module.SETTINGS, tie_break_live=False)
-    monkeypatch.setattr(settings_module, "SETTINGS", off)
-    assert tradable(d, "PAPER")[0] is True
+    # defaults: paper trades tie-breaks, live does NOT (no demonstrated edge, so it is never sent live unless enabled)
+    assert tradable(d, "PAPER") == (True, None)
     ok, why = tradable(d, "LIVE")
     assert not ok and "turned off for live" in why
+
+    both_on = dataclasses.replace(settings_module.SETTINGS, tie_break_live=True, tie_break_paper=True)
+    monkeypatch.setattr(settings_module, "SETTINGS", both_on)
+    assert tradable(d, "PAPER") == (True, None) and tradable(d, "LIVE") == (True, None)
+
+    paper_off = dataclasses.replace(settings_module.SETTINGS, tie_break_paper=False)
+    monkeypatch.setattr(settings_module, "SETTINGS", paper_off)
+    ok, why = tradable(d, "PAPER")
+    assert not ok and "turned off for paper" in why
 
     no_trade = rank_and_select(_tied_scores())
     assert tradable(no_trade, "PAPER")[0] is False
@@ -154,8 +160,12 @@ def test_a_live_tie_break_order_carries_the_tag_to_dhans_order_book(monkeypatch)
                             decision_id="RISK-abc123def456", security_id="777", exchange_segment="NSE_FNO",
                             transaction_type="BUY", option_type="CE", strike=22700.0, expiry="2030-01-01", lot_size=65, tag=tag)
 
+    from quant_intelligence.risk.risk_engine import _note_approval
+
+    _note_approval("RISK-abc123def456")  # a live order must carry a fresh risk-engine approval (single use)
     broker.place_order(order(TIE_BREAK_TAG))
     assert broker.client.place_order.call_args.args[0]["correlationId"] == "TB-RISK-abc123def456"
+    _note_approval("RISK-abc123def456")
     broker.place_order(order(None))
     assert broker.client.place_order.call_args.args[0]["correlationId"] == "RISK-abc123def456"
 
@@ -168,3 +178,12 @@ def test_the_live_gate_still_blocks_a_tie_break_order_when_live_is_not_authorise
     ack = broker.place_order(OrderRequest(strategy_name="Momentum", instrument="NIFTY", direction="LONG", quantity=65,
                                           security_id="777", tag=TIE_BREAK_TAG))
     assert ack.status == "REJECTED" and broker.client.place_order.call_count == 0
+
+
+def test_tie_break_is_not_sent_live_by_default():
+    """A tie-break pick has no demonstrated edge: the safe default keeps it out of live trading."""
+    import importlib
+    import os
+
+    assert "TIE_BREAK_LIVE" not in os.environ or os.environ["TIE_BREAK_LIVE"].lower() in ("0", "false", "no", "")
+    assert settings_module.SETTINGS.tie_break_live is False

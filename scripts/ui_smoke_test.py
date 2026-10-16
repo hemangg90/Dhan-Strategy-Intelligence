@@ -7,7 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from streamlit.testing.v1 import AppTest
 
 ROOT = Path(__file__).resolve().parent.parent / "quant_intelligence"
-pages = [ROOT / "app.py"] + sorted((ROOT / "pages").glob("*.py"))
+# app.py is the navigation router; home_page.py is the Dashboard it opens by default.
+pages = [ROOT / "app.py", ROOT / "home_page.py"] + sorted((ROOT / "pages").glob("*.py"))
 
 failures = []
 for page in pages:

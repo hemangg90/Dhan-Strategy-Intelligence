@@ -124,16 +124,22 @@ promise of profit** (read [Known limitations](#known-limitations-read-this-befor
 
 ## Dashboard pages
 
-Run the app and use the sidebar page list. The main page (`app.py`) is the command center.
+`app.py` is a navigation router. Pages are grouped by workflow into five workspaces in a **top navigation bar**:
+*Market Intelligence* (Dashboard, Market State, Regime Analysis, NSE Heatmap), *Strategy Intelligence* (Decision Center,
+Strategy Ranking, Strategy Library), *Research Lab* (Backtest Workbench, Historical Analogues, Research Reports), *Risk &
+Execution* (Risk Control, Paper Trading, the two auto-traders, Live Orders) and *Performance & Reports* (Positions &
+Orders, Daily Report, System Health). A decision shown anywhere is a **candidate**: it becomes an order only after a
+setup triggers and the independent risk engine approves it.
 
 | Page | Purpose |
 |---|---|
-| **Main (`app.py`)** | Instrument/timeframe/lookback controls, Dhan API-key panel, trading-mode badge, the current decision, strategy ranking table and regime probabilities. |
+| **Dashboard (`home_page.py`)** | Instrument/timeframe/lookback controls, token status (never the token), trading-mode badge, the current decision (NO TRADE / SELECTED / TIE-BREAK) with its reason, the ranked strategy table and the regime scores. |
+| **00 Decision Center** | Why each strategy is selected, eligible or rejected (net expectancy, standard error, win rate, sample size, distinct days, drawdown), data age and quality, and the independent risk-engine checks. |
 | 01 Market State | The latest feature vector (every feature is documented) and data-quality status. |
 | 02 Strategy Intelligence | Global vs conditional (current-state) performance for every strategy. |
 | 03 Strategy Library | Each strategy's description, parameters and required features. |
-| 04 Backtest Lab | Event-driven backtests with in-sample / out-of-sample split and walk-forward folds; editable parameters. |
-| 05 Regime Analysis | Regime probabilities and classifier confidence over time. |
+| 04 Backtest Lab | A workbench: stored runs on the left; per run KPIs, equity curve vs buy-and-hold (when cached prices cover the run), drawdown and daily returns. Also runs new in-sample / out-of-sample backtests and walk-forward folds with editable parameters. |
+| 05 Regime Analysis | Regime **scores** (normalised heuristic scores, not calibrated probabilities) over time. |
 | 06 Historical Analogues | The exact past setups used to score each strategy today. |
 | **07 Paper Trading** | A trading terminal for one instrument: quote header (last price, day change, range), candlestick chart with VWAP/EMA overlays and the setup's entry/stop/target lines, **option-chain ladder** (calls | strike | puts, OI, change in OI, IV, ATM highlighted) with an open-interest chart, PCR, max pain and support/resistance, the **strategy leaderboard**, a decision card (regime, selected strategy, setup status) and an **order ticket** showing premium, quantity, amount needed, max loss/profit **after charges**, risk:reward and a funds meter before you submit. "All instruments" scope hands over to the background scanner. |
 | **08 Positions & Orders** | A broker-style view of the paper account. Live KPIs (day P&L net of charges, capital used/available, win rate); tabs for **open positions** (cards with live P&L, stop-to-target progress bar, charges and a manual **Exit** / **Exit all** with confirmation), today's trades, filterable trade history, order book, fills (with slippage cost) and **analytics** (equity curve, profit factor, expectancy, payoff, drawdown, streaks, charges breakdown, P&L by strategy/instrument). CSV downloads on every table. |
@@ -154,8 +160,10 @@ Indian grouping (lakh/crore) and rupee signs; P&L is always colour **and** trian
 Charts follow a validated colour palette (blue/orange/aqua for series; green/red reserved for good/bad), one axis per
 chart, hairline grids and trading-hour gaps removed from intraday candles. The theme lives in `.streamlit/config.toml`
 and `ui/theme.py`. Quotes in watchlists come from the on-disk candle cache, so they cost no Dhan requests.
-Charges shown are estimates at Dhan's brokerage and the statutory option rates (display only - the paper broker books
-gross premium P&L).
+Charges are estimates at Dhan's brokerage and the configured statutory option rates. **Paper P&L is booked net of
+them**: closing a paper position subtracts brokerage, STT/exchange/SEBI/stamp/GST (option positions; brokerage + GST for
+others, since equity statutory charges are not modelled) and one tick of exit slippage, and stores the gross figure and
+the costs beside the net.
 
 ## The strategy library
 
@@ -459,6 +467,14 @@ streamlit run quant_intelligence/app.py                # run from the project ro
 Open http://localhost:8501. You can also paste the Client ID/token into the sidebar's **API Keys**
 panel instead of editing `.env`.
 
+**Presenting or screen-sharing?** Set `DEMO_LOCKDOWN=1` first (PowerShell: `$env:DEMO_LOCKDOWN = "1"`). It forces
+paper mode whatever `.env` says, closes the live-order gate, and hides the client ID and credential form (only token
+state and expiry are shown). Run `python scripts/demo_preflight.py` beforehand. `DEMO.md` has the full runbook.
+
+**Read-only website (optional).** `python -m uvicorn quant_intelligence.web.app:app --port 8000` serves a single-page site
+(Dashboard, Strategies, Backtests, Risk, Method) on the same research code. It has no order endpoints. Streamlit remains
+the primary application.
+
 **First run walkthrough**
 
 1. Open the dashboard; with valid credentials the pipeline runs on NIFTY and shows the ranking.
@@ -528,7 +544,7 @@ SQLite even with no `.env`.
 | `DHAN_BREAKER_THRESHOLD`, `DHAN_BREAKER_COOLDOWN_SEC`, `DHAN_BREAKER_MAX_COOLDOWN_SEC` | `3`, `30`, `120` | Consecutive 429s that pause reads, and the pause length (doubles up to the max). |
 | `DHAN_AUTH_FAILURE_COOLDOWN_SEC` | `300` | How long to stop sending requests with a token Dhan rejected (401). |
 | `DHAN_QUOTE_CACHE_TTL_SEC`, `DHAN_CHAIN_CACHE_TTL_SEC` | `2`, `15` | How long a live-price / option-chain response is shared between tabs and the auto-traders. |
-| `TIE_BREAK_PAPER`, `TIE_BREAK_LIVE`, `TIE_BREAK_SIZE_FACTOR` | `true`, `true`, `0.5` | Trade the top strategy (tagged TIE-BREAK, sized x factor) when the best two are statistically tied. |
+| `TIE_BREAK_PAPER`, `TIE_BREAK_LIVE`, `TIE_BREAK_SIZE_FACTOR` | `true`, `false`, `0.5` | Trade the top strategy (tagged TIE-BREAK, sized x factor) when the best two are statistically tied. |
 | `DATA_KEEPER`, `DATA_KEEPER_INTERVAL_SEC` | `true`, `60` | Background candle refresh for every watchlist instrument. |
 | `TOKEN_KEEPER`, `TOKEN_RENEW_BEFORE_HOURS` | `true`, `8` | Auto-renew the Dhan token when this many hours remain. |
 | `DHAN_PIN`, `DHAN_TOTP_SECRET` | *(unset)* | Optional. With both set the token keeper can generate a new token even after expiry. **Secrets: never commit or paste them.** |
@@ -759,7 +775,19 @@ temporary database and log directory and never write to your real ones, nor star
   Rs 1,800 budget; their mini contracts (GOLDM, SILVERM) do.
 - **Paper != live.** Paper fills use simple slippage on the last price; real fills depend on liquidity and
   spread. Sold-option margin is not modelled. Only holidays listed in `market_holidays.txt` (plus the fixed-date ones) are modelled.
-- **Live trading is unproven** against a funded account.
+- **Live trading is unproven** against a funded account. The live path now also requires a fresh single-use risk-engine
+  approval per order, treats a timed-out order as *unknown* (and blocks further orders until a human checks Dhan's order
+  book), and fails closed when the broker does not report today's P&L. A live position has **no stop at the broker** and
+  this software does not monitor live exits.
+- **The selector's edge is unestablished.** `docs/SELECTOR_EVALUATION.md` compares it with a random pick, a fixed
+  strategy chosen on warm-up data and a regime-based rule on ~2.5 months of data: no difference is detectable (selector
+  +0.011 R per trade, 95 % CI -0.29 to +0.34, 55 trades). Do not read any ranking as a prediction.
+- **Regime "probabilities" are heuristic scores** (a softmax of hand-written rules), uncalibrated, and the regime is not an
+  input to the analogue search or the ranking.
+- **Entries are assumed at the signal bar's close** (no latency or next-bar fill); stops that gap are filled at the worse
+  open, targets at the target.
+- See `docs/PROJECT_AUDIT.md`, `docs/STRATEGY_AUDIT.md` and `docs/RISK_AND_EXECUTION_AUDIT.md` for the verified status of
+  every component and the open defects.
 - **Paper state is in memory** (restored from the database on restart for the current day only).
 
 ## Disclaimer

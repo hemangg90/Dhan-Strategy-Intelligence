@@ -18,6 +18,7 @@ from quant_intelligence.utils.timeutil import now_ist
 import uuid
 
 from quant_intelligence.brokers.base_broker import BaseBroker, OrderAck, OrderRequest
+from quant_intelligence.brokers.paper_costs import round_trip_costs
 from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.utils.logging_utils import log_event
 
@@ -104,7 +105,12 @@ class PaperBroker(BaseBroker):
         # profits on premium falling, same as a SHORT.
         signed_field = pos.get("transaction") or pos["direction"]
         direction_sign = 1 if signed_field in ("LONG", "BUY") else -1
-        net_pnl = direction_sign * (exit_price - pos["entry_price"]) * pos["quantity"]
+        gross_pnl = direction_sign * (exit_price - pos["entry_price"]) * pos["quantity"]
+        costs, costs_model = round_trip_costs(pos, exit_price)
+        net_pnl = gross_pnl - costs  # `net_pnl` is net of brokerage, taxes/levies and exit slippage
+        pos["gross_pnl"] = gross_pnl
+        pos["costs"] = costs
+        pos["costs_model"] = costs_model
         pos["status"] = "CLOSED"
         pos["closed_at"] = now_ist()
         pos["exit_price"] = exit_price
@@ -152,8 +158,8 @@ class PaperBroker(BaseBroker):
                         tag=order.tag,
                     )
                 )
-        except Exception:
-            pass
+        except Exception as exc:  # the simulation continues in memory, but a lost row must be visible
+            log_event("paper_broker", f"Could not persist order record: {type(exc).__name__}", level="ERROR")
         return OrderAck(order_id=order_id, status=status, reject_reason=reject_reason, fill_price=fill_price, timestamp=now_ist())
 
     def _persist_fill(self, order_id, ts, price, qty, slippage) -> None:
@@ -163,8 +169,8 @@ class PaperBroker(BaseBroker):
 
             with get_session() as session:
                 session.add(Fill(order_id=order_id, timestamp=ts, fill_price=price, quantity=qty, slippage=slippage))
-        except Exception:
-            pass
+        except Exception as exc:  # the simulation continues in memory, but a lost row must be visible
+            log_event("paper_broker", f"Could not persist fill record: {type(exc).__name__}", level="ERROR")
 
     def _persist_position(self, pos: dict) -> None:
         try:
@@ -182,5 +188,5 @@ class PaperBroker(BaseBroker):
                         setattr(existing, k, v)
                 else:
                     session.add(Position(**row))
-        except Exception:
-            pass
+        except Exception as exc:  # the simulation continues in memory, but a lost row must be visible
+            log_event("paper_broker", f"Could not persist position record: {type(exc).__name__}", level="ERROR")

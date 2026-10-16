@@ -27,7 +27,7 @@ for si in output.strategy_intel:
             "Strategy": si.strategy_name,
             "Global Expected R": round(g.get("expected_r", 0), 3) if g.get("n_trades", 0) else None,
             "Global Win Rate": f"{g.get('win_rate', 0)*100:.1f}%" if g.get("n_trades", 0) else "N/A",
-            "Global Sharpe": round(g.get("sharpe", float('nan')), 2) if g.get("n_trades", 0) else None,
+            "Global Sharpe (daily net R)": round(g.get("sharpe", float('nan')), 2) if g.get("n_trades", 0) else None,
             "Global Trades": g.get("n_trades", 0),
             "Conditional Expected R": round(c["expected_r"], 3) if c.get("expected_r") is not None else None,
             "Conditional Win Prob": f"{c['prob_positive_return']*100:.1f}%" if c.get("prob_positive_return") is not None else "N/A",

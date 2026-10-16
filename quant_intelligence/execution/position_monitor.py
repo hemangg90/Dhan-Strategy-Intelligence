@@ -65,7 +65,10 @@ def monitor_positions(broker: PaperBroker, latest_bar: pd.Series) -> list[dict]:
         hit_target = (latest_bar["high"] >= target) if direction == "LONG" else (latest_bar["low"] <= target)
 
         if hit_stop:
-            closed = broker.close_position(pos["position_id"], stop, "STOP")
+            # A bar that opened beyond the stop gapped through it: the exit fills at the worse open, not at the stop.
+            bar_open = float(latest_bar["open"]) if "open" in latest_bar else stop
+            stop_fill = min(stop, bar_open) if direction == "LONG" else max(stop, bar_open)
+            closed = broker.close_position(pos["position_id"], stop_fill, "STOP")
             events.append({"type": "STOP_HIT", "position": closed})
             log_event("position_monitor", f"Stop hit for {pos['position_id']}", level="INFO")
         elif hit_target:
@@ -111,7 +114,9 @@ def monitor_option_positions(broker: PaperBroker, api_client) -> list[dict]:
             hit_target = premium <= target
 
         if hit_stop:
-            closed = broker.close_position(pos["position_id"], stop, "STOP")
+            # The premium is only sampled periodically, so it may already be past the stop: exit at the worse price.
+            stop_fill = min(stop, float(premium)) if transaction == "BUY" else max(stop, float(premium))
+            closed = broker.close_position(pos["position_id"], stop_fill, "STOP")
             events.append({"type": "STOP_HIT", "position": closed})
             log_event("position_monitor", f"Option premium stop hit for {pos['position_id']}", level="INFO")
         elif hit_target:

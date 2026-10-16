@@ -59,3 +59,26 @@ def test_website_is_read_only_and_serves_the_app():
 def test_unknown_run_and_strategy_return_404():
     client = TestClient(app)
     assert client.get("/api/backtests/nope").status_code == 404
+
+
+def test_a_visitor_arriving_during_warmup_reuses_the_warmup_result():
+    """Without this the visitor waited for the warm-up and then ran the whole pipeline a second time."""
+    calls = []
+
+    def slow_runner(inst, tf, start, end):
+        calls.append(1)
+        time.sleep(0.4)
+        return f"run-{len(calls)}"
+
+    cache = service.PipelineCache(runner=slow_runner, ttl=60.0)
+    cache.warm("NIFTY", "5min", 60)
+    time.sleep(0.05)  # the warm-up is running
+    t0 = time.monotonic()
+    assert cache.get("NIFTY", "5min") == "run-1"
+    assert len(calls) == 1 and time.monotonic() - t0 < 1.5
+
+
+def test_the_cache_keeps_separate_results_per_lookback_window():
+    cache = service.PipelineCache(runner=lambda i, t, s, e: (e - s).days, ttl=60.0)
+    assert cache.get("NIFTY", "5min", lookback_days=30) == 30
+    assert cache.get("NIFTY", "5min", lookback_days=90) == 90

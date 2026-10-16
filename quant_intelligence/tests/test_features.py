@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 
 from quant_intelligence.features.feature_engine import compute_features
@@ -37,9 +38,18 @@ def test_session_phase_values_are_valid(synthetic_features):
     assert set(synthetic_features["session_phase"].unique()) <= {"OPEN", "MID", "CLOSE"}
 
 
-def test_opening_range_is_consistent_within_session(synthetic_ohlcv, synthetic_features):
+def test_opening_range_is_causal_then_fixed_for_the_session(synthetic_ohlcv, synthetic_features):
+    """Inside the first 30 minutes the range is the running max/min of the bars seen so far (never the completed
+    range, which would be look-ahead); after the window it is fixed and equals the true first-30-minute range."""
     merged = synthetic_ohlcv.merge(synthetic_features, on="timestamp")
-    session = merged["timestamp"].dt.date
-    for _, group in merged.groupby(session):
-        or_highs = group["opening_range_high"].dropna().unique()
-        assert len(or_highs) <= 1, "opening range high must be constant within a session"
+    for _, g in merged.groupby(merged["timestamp"].dt.date):
+        g = g.reset_index(drop=True)
+        window = g["time_since_open_min"] <= 30
+        running_high = g["high"].where(window).cummax()
+        running_low = g["low"].where(window).cummin()
+        assert np.allclose(g["opening_range_high"], running_high.ffill(), equal_nan=True)
+        assert np.allclose(g["opening_range_low"], running_low.ffill(), equal_nan=True)
+        after = g.loc[~window, "opening_range_high"].dropna().unique()
+        assert len(after) <= 1, "opening range must be fixed once the window has closed"
+        if len(after):
+            assert after[0] == g.loc[window, "high"].max()
