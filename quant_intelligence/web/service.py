@@ -77,7 +77,8 @@ def overview(output) -> dict:
         "data_quality": output.data_quality_status,
         "data_quality_issues": [str(i) for i in (output.data_quality_issues or [])],
         "regime": {"label": output.regime_label, "confidence": output.regime_confidence,
-                   "probabilities": output.regime_probabilities},
+                   "probabilities": output.regime_probabilities, "axes": output.regime_axes,
+                   "clarity": output.regime_clarity, "age_bars": output.regime_age_bars},
         "decision": {"no_trade": no_trade, "strategy": None if no_trade else ranking.selected_strategy,
                      "tie_break": bool(ranking.tie_break), "reason": why_not or ranking.reason},
         "counts": {"evaluated": len(output.strategy_intel),
@@ -102,6 +103,14 @@ def strategy_detail(output, name: str) -> dict | None:
         "score_components": si.score.components,
         "note": "Historical statistics from past trades, net of modelled costs where stated. Not a prediction.",
     })
+
+
+def regimes_overview(timeframe: str = "5min") -> dict:
+    from quant_intelligence.regimes.universe import UNIVERSE
+
+    rows = UNIVERSE.peek(timeframe)  # never waits: the first call starts the scan and reports it as still running
+    return clean({"timeframe": timeframe, "ready": rows is not None, "instruments": rows or [],
+                  "note": "Heuristic regime scores from the local candle cache. Display only; not a prediction."})
 
 
 def backtest_runs(limit: int = 200) -> dict:

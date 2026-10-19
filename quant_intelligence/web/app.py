@@ -25,6 +25,9 @@ PLOTLY_JS = Path(plotly.__file__).resolve().parent / "package_data" / "plotly.mi
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     service.PIPELINE.warm()  # compute the default view in the background so the first visitor does not wait
+    from quant_intelligence.regimes.universe import UNIVERSE
+
+    UNIVERSE.warm()
     yield
 
 
@@ -55,6 +58,11 @@ def strategy(name: str, instrument: str = "NIFTY", timeframe: str = "5min"):
     if detail is None:
         raise HTTPException(status_code=404, detail="Unknown strategy")
     return JSONResponse(detail)
+
+
+@app.get("/api/regimes")
+def regimes(timeframe: str = "5min"):
+    return JSONResponse(service.regimes_overview(timeframe))
 
 
 @app.get("/api/backtests")

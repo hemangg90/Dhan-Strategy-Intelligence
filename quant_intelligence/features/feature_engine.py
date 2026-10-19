@@ -37,6 +37,12 @@ FEATURE_DEFINITIONS: dict[str, str] = {
     "return_20": "20-bar log return",
     "trend_slope": "Slope of a linear regression of close over the last 20 bars, normalized by price",
     "momentum_20": "Rate of change of close over the last 20 bars",
+    "trend_z": "trend_slope divided by its own rolling standard deviation (500 bars, past bars only): trend strength relative to this instrument's usual",
+    "momentum_z": "momentum_20 divided by its own rolling standard deviation (500 bars, past bars only)",
+    "or_position": "Where the close sits in the opening range, (close - range low) / (range high - range low); <0 below, >1 above; NaN until the range exists",
+    "prev_day_high": "High of the previous trading session",
+    "prev_day_low": "Low of the previous trading session",
+    "prev_day_range_pos": "Where the close sits in the previous session's range, (close - low) / (high - low); <0 below, >1 above",
     "market_structure": "Higher-high/higher-low (+1), lower-high/lower-low (-1), or mixed (0) over the last 10 bars",
     "atr_14": "Average True Range over 14 bars",
     "atr_pct_of_price": "ATR(14) as a percentage of current close",
@@ -113,6 +119,11 @@ def compute_features(df: pd.DataFrame, profile: MarketProfile = NSE) -> pd.DataF
     out["trend_slope"] = _rolling_slope(close, 20) / close
     out["momentum_20"] = close.pct_change(20)
     out["market_structure"] = _market_structure(high, low, window=10)
+    # Instrument-relative versions: divide by the series' own recent spread so "strong" means strong for THIS instrument
+    # (a fixed scaling treats a quiet index and a volatile commodity alike). Backward-looking window only.
+    for src, dst in (("trend_slope", "trend_z"), ("momentum_20", "momentum_z")):
+        spread = out[src].rolling(500, min_periods=60).std()
+        out[dst] = out[src] / spread.where(spread > 0)
 
     prev_close = close.shift(1)
     tr = pd.concat(
@@ -157,6 +168,8 @@ def compute_features(df: pd.DataFrame, profile: MarketProfile = NSE) -> pd.DataF
     or_low = low.where(or_mask).groupby(session_group).cummin()
     out["opening_range_high"] = or_high.groupby(session_group).ffill()
     out["opening_range_low"] = or_low.groupby(session_group).ffill()
+    or_width = (out["opening_range_high"] - out["opening_range_low"]).where(lambda w: w > 0)
+    out["or_position"] = (close - out["opening_range_low"]) / or_width
 
     prev_session_close = close.groupby(session_group).transform("last").shift(1)
     session_open_price = open_.groupby(session_group).transform("first")
@@ -235,6 +248,10 @@ def compute_features(df: pd.DataFrame, profile: MarketProfile = NSE) -> pd.DataF
     out["camarilla_r4"] = session_index.map(sess_hlc["r4"]).values
     out["camarilla_s3"] = session_index.map(sess_hlc["s3"]).values
     out["camarilla_s4"] = session_index.map(sess_hlc["s4"]).values
+    out["prev_day_high"] = session_index.map(sess_hlc["h"]).values
+    out["prev_day_low"] = session_index.map(sess_hlc["l"]).values
+    prev_day_width = pd.Series(out["prev_day_high"] - out["prev_day_low"]).where(lambda w: w > 0)
+    out["prev_day_range_pos"] = (close - out["prev_day_low"]) / prev_day_width
     del prev_session_high
 
     prev_high = high.shift(1)

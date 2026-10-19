@@ -20,7 +20,7 @@ from quant_intelligence.utils.market_profile import profile_for
 from quant_intelligence.market_state.market_state_engine import MarketState, build_current_state
 from quant_intelligence.ranking.ranking_engine import RankingDecision, StrategyScore, rank_and_select
 from quant_intelligence.research.ranking_core import assess_strategy
-from quant_intelligence.regimes.regime_engine import classify_regime, regime_confidence
+from quant_intelligence.regimes.regime_engine import classify_series
 from quant_intelligence.strategies.registry import get_all_strategies
 from quant_intelligence.utils.logging_utils import log_event
 
@@ -49,6 +49,10 @@ class PipelineOutput:
     strategy_intel: list[StrategyIntelligence]
     ranking: RankingDecision
     data_quality_issues: list = field(default_factory=list)
+    regime_axes: dict = field(default_factory=dict)  # direction / volatility / volatility_trend
+    regime_clarity: float | None = None  # heuristic 0-1: margin between top scores + agreement with the axes
+    regime_age_bars: int | None = None  # bars since the label last changed
+    regime_series: pd.DataFrame | None = None  # label per bar (smoothed), for the history chart
 
 
 def run_pipeline(
@@ -76,8 +80,12 @@ def run_pipeline(
     if market_state is None:
         raise ValueError("Not enough warmup bars to build a current market state.")
 
-    regime_label, regime_probs = classify_regime(market_state.features)
-    conf = regime_confidence(regime_probs)
+    # Smoothed, persistence-aware regime for the latest bar (the one-bar `classify_regime` flickers between labels).
+    regime_series = classify_series(features, instrument)
+    last = regime_series.iloc[-1]
+    regime_label = str(last["label"])
+    regime_probs = regime_series.attrs["probabilities"]
+    conf = float(regime_probs[regime_label])
 
     log_event(
         "pipeline",
@@ -142,6 +150,10 @@ def run_pipeline(
         strategy_intel=strategy_intel,
         ranking=ranking,
         data_quality_issues=quality_issues,
+        regime_axes={k: str(last[k]) for k in ("direction", "volatility", "volatility_trend")},
+        regime_clarity=float(last["clarity"]),
+        regime_age_bars=int(last["age_bars"]),
+        regime_series=regime_series,
     )
 
 

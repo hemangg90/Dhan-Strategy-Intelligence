@@ -69,3 +69,12 @@ Newest first. "Compat" notes anything that changes behaviour or stored data. Tes
 * `requirements-dev.txt` (new): adds Hypothesis for property tests and the HTTP client the website tests need (`httpx`,
   `httpx2`); runtime requirements gain `fastapi`, `uvicorn`.
 * New this round: `test_order_state`, `test_chain_formulas`, `test_premium_translation`, `test_pages_degrade`.
+
+## Regime and analogue upgrade (2026-10-19)
+* Regime: instrument-relative trend inputs, direction/volatility axes, clarity, persistence (`classify_series`), overlays only
+  where meaningful, all-instrument scan (`regimes/universe.py`, `/api/regimes`), forward-behaviour check (`regimes/validation.py`).
+* Analogues: `ANALOGUE_METHOD=robust` (default stays `legacy`): nine features, robust scaling, distance cutoff, per-day cap,
+  kernel weights, bootstrap interval, informativeness test, `as_of` filter. Evidence and limits: `REGIME_AND_ANALOGUES.md`.
+* Page 06 confidence text now matches the day-based rule. Evaluator takes `--analogue legacy|robust`.
+* Tests: 820 -> 846 (26 new in `test_regime_analogue_upgrade.py`). Full run: 845 passed, 1 failed (Regime page timed out
+  scanning 25 instruments inline); fixed by a non-blocking scan, affected tests and the page smoke test re-run green.

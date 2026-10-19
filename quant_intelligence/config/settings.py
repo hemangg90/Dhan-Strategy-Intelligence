@@ -211,6 +211,9 @@ class Settings:
     # computation modules (estimators, Black-Scholes) are always importable.
     vol_models_enabled: bool = _bool_env("VOL_MODELS_ENABLED", False)
     vol_features_in_analogues: bool = _bool_env("VOL_FEATURES_IN_ANALOGUES", False)
+    # "legacy" (6 features, z-score, plain nearest 30) or "robust" (see docs/REGIME_AND_ANALOGUES.md). Chosen on the walk-forward
+    # evaluation, not on taste: the default only changes if the evidence there supports it.
+    analogue_method: str = os.getenv("ANALOGUE_METHOD", "legacy").strip().lower()
     vol_premium_model_in_backtest: bool = _bool_env("VOL_PREMIUM_MODEL_IN_BACKTEST", False)
     vol_target_sizing: bool = _bool_env("VOL_TARGET_SIZING", False)
     vol_risk_check: bool = _bool_env("VOL_RISK_CHECK", False)

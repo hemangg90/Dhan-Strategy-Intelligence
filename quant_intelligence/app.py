@@ -59,6 +59,9 @@ if not st.session_state.get("_warm_requested"):
     from quant_intelligence.research.shared_cache import PIPELINE
 
     PIPELINE.warm(SETTINGS.default_instrument, SETTINGS.default_timeframe, 60)
+    from quant_intelligence.regimes.universe import UNIVERSE
+
+    UNIVERSE.warm()
     st.session_state["_warm_requested"] = True
 
 navigation = st.navigation(WORKSPACES, position="top")

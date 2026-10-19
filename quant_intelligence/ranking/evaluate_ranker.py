@@ -70,6 +70,7 @@ def evaluate_instrument(
     min_history_bars: int = 400,
     strategies=None,
     max_points: int | None = None,
+    analogue_config=None,
 ) -> list[Decision]:
     quantity = quantity or default_quantity(instrument)
     market = market_for(instrument)
@@ -94,7 +95,7 @@ def evaluate_instrument(
         exit_idx = np.array([ts_to_idx.get(t.exit_timestamp, len(ohlcv)) for t in trades])
         obs["entry_idx"], obs["exit_idx"] = entry_idx, exit_idx
         entry_regimes = np.array([
-            classify_regime(features.iloc[int(i)].drop(labels=["timestamp"]).to_dict())[0] for i in entry_idx
+            classify_regime(features.iloc[int(i)].drop(labels=["timestamp"]).to_dict(), instrument)[0] for i in entry_idx
         ])
         per_strategy[strat.name] = {
             "regimes": entry_regimes,
@@ -124,13 +125,13 @@ def evaluate_instrument(
         for name, d in per_strategy.items():
             known_mask = (d["exit_idx"] <= t) & (d["entry_idx"] < t)
             metrics = {"max_drawdown_r": max_drawdown_in_r(d["net_r_arr"][known_mask])}
-            scores.append(assess_observations(name, d["obs"][known_mask], current, metrics).score)
+            scores.append(assess_observations(name, d["obs"][known_mask], current, metrics, config=analogue_config).score)
         ranking = rank_and_select(scores, "OK", allow_tie_break=ALLOW_TIE_BREAK)
 
         at_t = {n: d["net_r"][t] for n, d in per_strategy.items() if t in d["net_r"]}
         selected = None if ranking.is_no_trade else ranking.selected_strategy
 
-        regime_now = classify_regime(current)[0]
+        regime_now = classify_regime(current, instrument)[0]
         regime_pick, regime_best = None, 0.0  # must beat zero expectancy to trade
         for name in at_t:
             d = per_strategy[name]
@@ -268,6 +269,7 @@ def main() -> None:
     ap.add_argument("--json")
     ap.add_argument("--max-points", type=int, default=None, help="cap decision points per instrument (speed)")
     ap.add_argument("--tie-break", action="store_true", help="include tie-break trades (production default)")
+    ap.add_argument("--analogue", choices=["legacy", "robust"], default=None, help="analogue method (default: the configured one)")
     args = ap.parse_args()
     symbols = args.symbols or list(SETTINGS.option_underlyings) + [s["symbol"] for s in WATCHLIST_STOCKS]
     global ALLOW_TIE_BREAK
@@ -276,7 +278,10 @@ def main() -> None:
     from quant_intelligence.config.settings import SETTINGS as _S
 
     print("flags: tie_break=%s vol_premium_model=%s" % (ALLOW_TIE_BREAK, _S.vol_premium_model_in_backtest))
-    report, _ = evaluate_symbols(symbols, max_points=args.max_points)
+    from quant_intelligence.analogues.analogue_engine import CONFIGS
+
+    report, _ = evaluate_symbols(symbols, max_points=args.max_points,
+                                 analogue_config=CONFIGS[args.analogue] if args.analogue else None)
     for sym, r in report["per_symbol"].items():
         print(f"{sym:11}", {k: (round(v, 3) if isinstance(v, float) else v) for k, v in r.items() if not k.endswith("ci95")})
     print("\nOVERALL")

@@ -5,7 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import streamlit as st
 
-from quant_intelligence.analogues.analogue_engine import COMPARISON_FEATURES
+from quant_intelligence.analogues.analogue_engine import ALL_FEATURES as COMPARISON_FEATURES
 from quant_intelligence.ui.state import init_session_state, run_pipeline_cached
 from quant_intelligence.ui.theme import apply_theme
 
@@ -48,4 +48,9 @@ else:
             "This strategy's conditional edge cannot be estimated reliably right now."
         )
     elif sel.conditional_metrics.get("confidence_label") == "LOW":
-        st.warning("LOW CONFIDENCE: fewer than 30 analogues. Treat the conditional expectancy estimate with caution.")
+        st.warning("LOW CONFIDENCE: the analogues cover fewer than 6 separate trading days (rows from one session count as one "
+                   "piece of evidence). Treat the conditional expectancy estimate with caution.")
+    if sel.conditional_metrics.get("analogues_informative") is False:
+        st.info("Analogues add no detectable information here: sets built for arbitrary other days differ from the strategy's "
+                f"overall mean about as much as this one (p = {sel.conditional_metrics.get('conditioning_p_value'):.2f}), "
+                "so the overall estimate is shown instead.")
