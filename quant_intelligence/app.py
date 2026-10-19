@@ -29,6 +29,7 @@ WORKSPACES = {
         _page("pages/16_NSE_Heatmap.py", "NSE Heatmap"),
     ],
     "Strategy Intelligence": [
+        _page("pages/00_Candidate.py", "Candidate"),
         _page("pages/00_Decision_Center.py", "Decision Center"),
         _page("pages/02_Strategy_Intelligence.py", "Strategy Ranking"),
         _page("pages/03_Strategy_Library.py", "Strategy Library"),
@@ -48,7 +49,9 @@ WORKSPACES = {
     "Performance & Reports": [
         _page("pages/08_Positions_and_Orders.py", "Positions & Orders"),
         _page("pages/15_Daily_Report.py", "Daily Report"),
+        _page("pages/17_Settings_and_Data_Status.py", "Settings & Data Status"),
         _page("pages/11_System_Logs_Health.py", "System Health"),
+        _page("pages/18_Guide.py", "Guide"),
     ],
 }
 

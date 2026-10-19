@@ -70,7 +70,7 @@ def _pct(x) -> str:
 # ------------------------------------------------------------------------------------------ data access
 def _load(report_date: dt.date, scope: str) -> dict:
     from quant_intelligence.database.db import get_session
-    from quant_intelligence.database.models import Order, Position, RiskEvent, ScanDecision, SystemEvent
+    from quant_intelligence.database.models import MarketDataMetadata, Order, Position, RiskEvent, ScanDecision, SystemEvent
 
     day_start = dt.datetime.combine(report_date, dt.time.min)
     day_end = day_start + dt.timedelta(days=1)
@@ -84,12 +84,19 @@ def _load(report_date: dt.date, scope: str) -> dict:
         risk = session.query(RiskEvent).filter(RiskEvent.timestamp >= utc_lo, RiskEvent.timestamp < utc_hi).all()
         events = session.query(SystemEvent).filter(SystemEvent.timestamp >= utc_lo, SystemEvent.timestamp < utc_hi,
                                                    SystemEvent.level.in_(["WARNING", "ERROR"])).all()
+        quality = session.query(MarketDataMetadata).filter(MarketDataMetadata.fetched_at >= utc_lo,
+                                                           MarketDataMetadata.fetched_at < utc_hi).all()
+        quality = [{"instrument": m.instrument, "status": m.quality_status, "source": m.source,
+                    "category": (m.quality_report or {}).get("category"), "issues": list((m.quality_report or {}).get("issues") or [])}
+                   for m in quality if _in_scope(m.instrument, scope)]
         # detach plain values so the session can close
         return {
+            "data_quality": quality,
             "positions": positions_frame(positions, now=now_ist()),
             "orders": [{"status": o.status, "reject_reason": o.reject_reason, "strategy": o.strategy_name} for o in orders],
             "decisions": [{"status": d.status, "reason_class": d.reason_class, "strategy": d.strategy, "tie_break": bool(d.tie_break),
-                           "reason": d.reason, "instrument": d.instrument} for d in decisions],
+                           "reason": d.reason, "instrument": d.instrument, "bar_ts": d.bar_ts, "expected_r": d.expected_r}
+                          for d in decisions],
             "risk": [{"event_type": r.event_type, "reason": r.reason} for r in risk],
             "events": [{"component": e.component, "level": e.level, "message": e.message} for e in events],
         }
@@ -123,6 +130,29 @@ def _funnel(decisions: list[dict]) -> dict:
         "veto_reasons": _count_table([d["reason_class"] for d in decisions if d["status"] == "VETOED"], "reason"),
         "by_strategy": sorted(strategies.values(), key=lambda r: -r["signals"]),
     }
+
+
+REJECTED_SETUP_STATUSES = ("TRIGGERED", "VETOED", "REJECTED", "SKIPPED", "CHAIN_ERROR")
+
+
+def _rejected_setups(decisions: list[dict], limit: int = 100) -> list[dict]:
+    """Setups that fired (or were looked at) and did NOT become a trade, with the reason, newest bar first."""
+    rows = [d for d in decisions if d["status"] in REJECTED_SETUP_STATUSES]
+    rows.sort(key=lambda d: str(d.get("bar_ts")), reverse=True)
+    return [{"bar": d.get("bar_ts"), "instrument": d.get("instrument"), "strategy": d.get("strategy"), "status": d["status"],
+             "reason_class": d.get("reason_class"), "reason": (d.get("reason") or "")[:200]} for d in rows[:limit]]
+
+
+def _data_quality(items: list[dict], top: int = 20) -> dict:
+    """What the data-quality gate found while the day's data was loaded: how many loads, how many were not OK, and what."""
+    not_ok = [i for i in items if i["status"] != "OK"]
+    seen: dict[tuple, dict] = {}
+    for i in not_ok:
+        key = (i["instrument"], i["status"], (i["issues"] or [""])[0][:100])
+        seen.setdefault(key, {"instrument": i["instrument"], "status": i["status"], "category": i["category"],
+                              "source": i["source"], "issue": key[2], "times": 0})["times"] += 1
+    return {"loads": len(items), "not_ok": len(not_ok),
+            "items": sorted(seen.values(), key=lambda r: -r["times"])[:top]}
 
 
 def _health(data: dict, unresolved: dict) -> dict:
@@ -195,6 +225,24 @@ def _narrative(rep: dict) -> list[str]:
     return out
 
 
+METHODOLOGY = [
+    "Trade results are SIMULATED: paper orders filled at the last price plus modelled slippage, with modelled brokerage and "
+    "statutory charges. They are not exchange fills.",
+    "Expected R is a HISTORICAL estimate: the strategy's net R in past situations most similar to the one at entry, shrunk toward "
+    "its own overall mean. It is not a forecast.",
+    "R = net P&L after charges divided by the amount risked at the stop. A strategy is judged on mean R and its t-statistic, "
+    "never on a single day.",
+    "The signals-vs-trades funnel counts one decision per instrument per closed bar; the strongest outcome on a bar is kept.",
+    "Results exclude positions left open when the app was not running (they have no outcome). The data-quality gate must pass "
+    "for a decision to be made; bars that fail it produce NO TRADE, not a guess.",
+    "Nothing here is investment advice or evidence that a strategy will be profitable.",
+]
+LABELS = {
+    "trades": "SIMULATED (paper trading)",
+    "expected_r": "HISTORICAL (backtest-based estimate)",
+    "decisions": "Recorded by the system while it scanned",
+}
+
 CAVEATS = [
     "Paper trading: fills use simple slippage on the last price; real fills depend on liquidity and spread.",
     "Charges are modelled at Dhan's brokerage and the statutory option rates; check them against a contract note.",
@@ -245,6 +293,10 @@ def build_report(report_date: dt.date, scope: str = "ALL", now: dt.datetime | No
         "risk": {"vetoes": _count_table([r["reason"] for r in data["risk"] if r["event_type"] == "VETO"], "reason", top=8),
                  "approved": sum(1 for r in data["risk"] if r["event_type"] == "APPROVED")},
         "health": _health(data, unresolved),
+        "rejected_setups": _rejected_setups(data["decisions"]),
+        "data_quality": _data_quality(data.get("data_quality", [])),
+        "methodology": METHODOLOGY,
+        "labels": LABELS,
         "caveats": CAVEATS,
     }
     rep["summary"]["today"] = {k: v for k, v in rep["summary"]["today"].items() if k not in ("avg_held",)}
@@ -308,6 +360,14 @@ def to_markdown(rep: dict) -> str:
             f"- Orders today: {rep['orders']['total']} ({rep['orders']['filled']} filled, {rep['orders']['rejected']} rejected)",
             f"- Unresolved positions: {h['unresolved']['stale']} stale, {h['unresolved']['open']} open", ""]
     out += _md_table(rep["risk"]["vetoes"], [("reason", "Risk-engine vetoes"), ("count", "Times")])
+    out += ["## Setups that did not become trades"]
+    out += _md_table(rep.get("rejected_setups", [])[:40], [("bar", "Bar"), ("instrument", "Instrument"), ("strategy", "Strategy"),
+                                                       ("status", "Outcome"), ("reason_class", "Reason"), ("reason", "Detail")])
+    dq = rep.get("data_quality", {"loads": 0, "not_ok": 0, "items": []})
+    out += ["## Data quality", f"{dq['loads']} data loads recorded; {dq['not_ok']} were not OK (those bars produce NO TRADE).", ""]
+    out += _md_table(dq["items"], [("instrument", "Instrument"), ("status", "Status"), ("category", "Category"), ("issue", "Finding"), ("times", "Times")])
+    out += ["## Methodology", *[f"- {m}" for m in rep.get("methodology", [])], "",
+            "## What each number is", *[f"- {k.replace('_', ' ').capitalize()}: {v}" for k, v in rep.get("labels", {}).items()], ""]
     out += ["## Caveats", *[f"- {c}" for c in rep["caveats"]], ""]
     return "\n".join(out)
 

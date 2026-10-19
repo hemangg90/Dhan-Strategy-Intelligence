@@ -78,3 +78,13 @@ Newest first. "Compat" notes anything that changes behaviour or stored data. Tes
 * Page 06 confidence text now matches the day-based rule. Evaluator takes `--analogue legacy|robust`.
 * Tests: 820 -> 846 (26 new in `test_regime_analogue_upgrade.py`). Full run: 845 passed, 1 failed (Regime page timed out
   scanning 25 instruments inline); fixed by a non-blocking scan, affected tests and the page smoke test re-run green.
+
+## Candidate workflow, provenance, audit trail (2026-10-20)
+* `data/provenance.py`: LIVE / DELAYED / HISTORICAL / SIMULATED label on every result (Home, Decision Center, Candidate, website).
+* `research/evidence.py`, `research/sensitivity.py`: profit factor, frequency, cost drag, holdout, regime breakdown, versus-winner,
+  Sidak note; parameter sensitivity in the Backtest Workbench. Display only; selection unchanged.
+* `risk_engine.preview_trade`: the real checks with no audit row and no approval (context variable, reset on error).
+* `pages/00_Candidate.py` + `ui/candidate.py`: one page from data to the risk verdict, naming the failing condition.
+* `reports/trace.py`: decision -> risk -> order -> fill -> position trace, orphans, rejected-decision reader; new tabs in Positions & Orders.
+* Settings & Data Status and Guide pages; Daily Report gains rejected setups, data-quality findings, methodology, labels, printable HTML.
+* Details and limits: `CANDIDATE_WORKFLOW.md`.

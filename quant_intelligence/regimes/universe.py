@@ -14,10 +14,12 @@ import pandas as pd
 from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.config.watchlist import COMMODITY_SYMBOLS, WATCHLIST_STOCKS
 from quant_intelligence.data.data_manager import CACHE_DIR, _read_cache
+from quant_intelligence.data.provenance import classify_mode
 from quant_intelligence.data.quality import QUALITY_FAIL, clean_ohlcv, validate_ohlcv
 from quant_intelligence.features.feature_engine import compute_features
 from quant_intelligence.regimes.regime_engine import classify_series
 from quant_intelligence.utils.market_profile import profile_for
+from quant_intelligence.utils.timeutil import now_ist
 
 LOOKBACK_DAYS = 60
 MIN_BARS = 120
@@ -39,7 +41,7 @@ def _timeframe_minutes(timeframe: str) -> int:
 
 def regime_for_instrument(symbol: str, kind: str, timeframe: str = "5min") -> dict:
     row = {"instrument": symbol, "kind": kind, "data_status": "NO DATA", "category": "UNAVAILABLE", "rows": 0,
-           "last_bar": None, "regime": None, "confidence": None, "clarity": None, "direction": None,
+           "last_bar": None, "mode": None, "source": "cache", "regime": None, "confidence": None, "clarity": None, "direction": None,
            "volatility": None, "volatility_trend": None, "age_bars": None, "note": None}
     path = CACHE_DIR / f"{symbol}_{timeframe}.parquet"
     if not path.exists():
@@ -62,6 +64,7 @@ def regime_for_instrument(symbol: str, kind: str, timeframe: str = "5min") -> di
         if report.status == QUALITY_FAIL:
             return row  # failed data gets no regime
         row["rows"], row["last_bar"] = int(len(df)), df["timestamp"].max()
+        row["mode"] = classify_mode(row["last_bar"], now_ist(), profile, tf)
         if len(df) < MIN_BARS:
             row["note"] = f"only {len(df)} bars (need {MIN_BARS})"
             return row

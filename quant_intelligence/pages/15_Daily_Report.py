@@ -81,14 +81,19 @@ kpi_row([
     {"label": "Open positions", "value": str(s["open_positions"])},
 ])
 
-d1, d2, d3, _ = st.columns([1, 1, 1, 3])
+d1, d2, d3, d4, _ = st.columns([1, 1, 1, 1.4, 2])
 d1.download_button("Excel", export.to_excel(rep), file_name=f"daily_report_{rep['date']}_{scope}.xlsx",
                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_xlsx")
 d2.download_button("Markdown", markdown.encode("utf-8"), file_name=f"daily_report_{rep['date']}_{scope}.md", mime="text/markdown", key="dl_md")
 d3.download_button("JSON", export.to_json(rep), file_name=f"daily_report_{rep['date']}_{scope}.json", mime="application/json", key="dl_json")
+d4.download_button("Printable (HTML)", export.markdown_to_html(markdown, f"Daily report {rep['date']} {scope}").encode("utf-8"),
+                   file_name=f"daily_report_{rep['date']}_{scope}.html", mime="text/html", key="dl_html",
+                   help="Open in a browser and print to PDF.")
+st.caption("Trade results in this report are " + (rep.get("labels") or {}).get("trades", "SIMULATED (paper trading)")
+           + "; expected R is " + (rep.get("labels") or {}).get("expected_r", "HISTORICAL") + ".")
 
-tab_sum, tab_str, tab_sig, tab_brk, tab_exp, tab_health, tab_days = st.tabs(
-    ["How things went", "Strategies", "Signals & risk", "Breakdowns", "Expected vs realised", "System health", "All days"]
+tab_sum, tab_str, tab_sig, tab_rej, tab_brk, tab_exp, tab_health, tab_days = st.tabs(
+    ["How things went", "Strategies", "Signals & risk", "Not traded & data", "Breakdowns", "Expected vs realised", "System health", "All days"]
 )
 
 with tab_sum:
@@ -97,6 +102,9 @@ with tab_sum:
     with st.expander("How to read this report"):
         for c in rep["caveats"]:
             st.markdown(f"- {c}")
+    with st.expander("Methodology"):
+        for m in rep.get("methodology") or ["This stored report predates the methodology section; press 'Generate / refresh' to add it."]:
+            st.markdown(f"- {m}")
 
 
 def _strategy_frame(rows: list[dict]) -> pd.DataFrame:
@@ -161,6 +169,23 @@ with tab_sig:
         _table(st, f["by_strategy"])
         st.markdown("**Rejected orders (reasons)**")
         _table(st, rep["orders"]["reject_reasons"])
+
+with tab_rej:
+    st.markdown("**Setups that did not become trades**")
+    rej = rep.get("rejected_setups")
+    if rej is None:
+        st.caption("This stored report predates this section; press 'Generate / refresh this report now'.")
+    elif not rej:
+        st.caption("none")
+    else:
+        st.dataframe(pd.DataFrame(rej), width="stretch", hide_index=True)
+    st.markdown("**Data quality findings while the data was loaded**")
+    dq = rep.get("data_quality")
+    if dq is None:
+        st.caption("This stored report predates this section.")
+    else:
+        st.caption(f"{dq['loads']} data loads recorded, {dq['not_ok']} not OK. A bar that fails the gate produces NO TRADE.")
+        _table(st, dq["items"])
 
 with tab_brk:
     dims = {"Instrument": "instrument", "Market": "market", "Calls vs puts": "option_type", "Exit reason": "exit_reason",

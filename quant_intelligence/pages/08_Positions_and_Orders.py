@@ -95,8 +95,8 @@ def live_kpis() -> None:
 
 live_kpis()
 
-tab_open, tab_today, tab_hist, tab_orders, tab_fills, tab_stats = st.tabs(
-    ["Open positions", "Today's trades", "Trade history", "Order book", "Fills", "Analytics"]
+tab_open, tab_today, tab_hist, tab_orders, tab_fills, tab_stats, tab_trace, tab_rejected = st.tabs(
+    ["Open positions", "Today's trades", "Trade history", "Order book", "Fills", "Analytics", "Trace", "Rejected & skipped"]
 )
 
 
@@ -252,3 +252,66 @@ with tab_stats:
             st.markdown("**Net P&L by instrument**")
             st.plotly_chart(pnl_bar_chart(pnl_by(closed_all, "instrument"), "instrument"), width="stretch",
                             config={"displayModeBar": False})
+
+
+# ---------------------------------------------------------------------------------------------- audit trail
+with tab_trace:
+    from quant_intelligence.reports.trace import orphans, trade_trace
+    from quant_intelligence.ui.trace_view import timeline_frame, trace_summary_frame
+
+    st.caption("Follow one SIMULATED trade from the signal to its outcome: the scan decision, the risk approval, the order, the "
+               "modelled fill, the exit, and what the ranker expected against what happened. Links are joined by decision id.")
+    try:
+        with get_session() as session:
+            traces = trade_trace(session, limit=100)
+            broken = orphans(session)
+    except Exception as exc:
+        traces, broken = [], {}
+        st.error(f"Could not read the audit trail: {exc}")
+    if not traces:
+        st.info("No paper trades have been recorded yet.")
+    else:
+        st.dataframe(trace_summary_frame(traces), width="stretch", hide_index=True)
+        labels = [f"{t['opened_at']:%d %b %H:%M} · {t['instrument']} · {t['strategy']} · {t['status']}" for t in traces]
+        chosen = st.selectbox("Trade", range(len(traces)), format_func=lambda i: labels[i], key="p08_trace_pick")
+        t = traces[chosen]
+        a, b, c, d = st.columns(4)
+        a.metric("Expected R (ranker)", "n/a" if t["expected_r"] is None else f"{t['expected_r']:.2f}")
+        b.metric("Realised R", "n/a" if t["realised_r"] is None else f"{t['realised_r']:.2f}",
+                 help=t["r_basis"] or "open or unavailable")
+        c.metric("Difference", "n/a" if t["r_difference"] is None else f"{t['r_difference']:+.2f}")
+        d.metric("Regime at entry", (t["regime_at_entry"] or "n/a").replace("_", " ").title())
+        st.dataframe(timeline_frame(t["timeline"]), width="stretch", hide_index=True)
+        if t["missing_links"]:
+            st.warning("Missing from the record: " + ", ".join(t["missing_links"]) +
+                       ". Trades from before the decision log existed have no scan decision.")
+        st.caption(f"{t['label']}: fills are modelled (slippage and charges assumed), not exchange fills. A single trade's R "
+                   "difference is noise; it is the average over many trades that means something.")
+    if any(broken.values()):
+        with st.expander("Records whose chain stops early"):
+            for name, rows in broken.items():
+                if rows:
+                    st.markdown(f"**{name.replace('_', ' ').capitalize()}** ({len(rows)})")
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+with tab_rejected:
+    from quant_intelligence.reports.trace import rejected_decisions
+
+    st.caption("Bars where the system looked and did not trade: stood aside (NO TRADE), waited for a setup, skipped, or was "
+               "vetoed or rejected. One row per instrument and bar; the strongest outcome on that bar is kept.")
+    try:
+        with get_session() as session:
+            rows = rejected_decisions(session, limit=500)
+    except Exception as exc:
+        rows = []
+        st.error(f"Could not read the decision log: {exc}")
+    if not rows:
+        st.info("No rejected or skipped decisions have been recorded yet. They are written while the auto-trader scans.")
+    else:
+        frame = pd.DataFrame(rows)
+        pick = st.multiselect("Reason", sorted(frame["reason_class"].dropna().unique()), key="p08_rej_reason")
+        if pick:
+            frame = frame[frame["reason_class"].isin(pick)]
+        st.dataframe(frame.drop(columns=["decision_id"]), width="stretch", hide_index=True)
+        st.caption(f"{len(frame)} decisions shown. Counts by reason: " +
+                   ", ".join(f"{k} {v}" for k, v in frame["reason_class"].value_counts().items()))

@@ -9,7 +9,7 @@ from streamlit.testing.v1 import AppTest
 
 ROOT = Path(__file__).resolve().parent.parent
 PAGES = [ROOT / "app.py", ROOT / "home_page.py"] + sorted((ROOT / "pages").glob("*.py"))
-NEEDS_PIPELINE = {"home_page.py", "00_Decision_Center.py", "01_Market_State.py", "02_Strategy_Intelligence.py",
+NEEDS_PIPELINE = {"home_page.py", "00_Decision_Center.py", "00_Candidate.py", "01_Market_State.py", "02_Strategy_Intelligence.py",
                   "05_Regime_Analysis.py", "06_Historical_Analogues.py"}
 
 
