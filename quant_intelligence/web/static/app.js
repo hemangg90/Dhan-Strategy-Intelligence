@@ -51,6 +51,7 @@ function navChips(o) {
   const chips = [];
   if (o) {
     chips.push(chip("Data " + o.data_quality, o.data_quality === "OK" ? "good" : "bad"));
+    if (o.provenance) chips.push(chip(o.provenance.mode, o.provenance.mode === "LIVE" ? "good" : "info"));
     chips.push(chip(o.mode.label, "info"));
   }
   $("#navchips").innerHTML = chips.join("");
@@ -78,6 +79,7 @@ async function dashboard() {
     <div class="card kpi"><div class="l">Data age</div><div class="v ${fresh ? "pos" : "neg"}">${age == null ? "n/a" : age > 120 ? (age / 60).toFixed(1) + " h" : Math.max(age, 0).toFixed(0) + " min"}</div><div class="s">orders need data under ${o.max_order_age_minutes} min old</div></div>
     <div class="card kpi"><div class="l">Eligible now</div><div class="v">${o.counts.eligible} / ${o.counts.evaluated}</div><div class="s">strategies clearing edge and confidence bars</div></div>
   </div>
+  ${o.provenance && o.provenance.mode !== "LIVE" ? `<div class="note" style="margin:-6px 0 12px"><b>${esc(o.provenance.mode)}</b>: ${esc(o.provenance.mode_meaning)} Source: ${esc(o.provenance.source)}.</div>` : ""}
   ${o.data_quality_issues.map((i) => `<div class="warnbox">${esc(i)}</div>`).join("")}
   <div class="card banner ${cls}"><div class="k">Decision${d.tie_break ? " - tie-break" : ""}</div>
     <div class="t">${d.no_trade ? "NO TRADE" : esc(d.strategy)}</div><div class="r">${esc(d.reason)}</div></div>

@@ -15,6 +15,7 @@ import pandas as pd
 
 from quant_intelligence.backtesting.engine import run_backtest, BacktestResult
 from quant_intelligence.data.data_manager import DataManager
+from quant_intelligence.data.provenance import build_provenance
 from quant_intelligence.features.feature_engine import compute_features
 from quant_intelligence.utils.market_profile import profile_for
 from quant_intelligence.market_state.market_state_engine import MarketState, build_current_state
@@ -23,6 +24,7 @@ from quant_intelligence.research.ranking_core import assess_strategy
 from quant_intelligence.regimes.regime_engine import classify_series
 from quant_intelligence.strategies.registry import get_all_strategies
 from quant_intelligence.utils.logging_utils import log_event
+from quant_intelligence.utils.timeutil import now_ist
 
 
 @dataclass
@@ -33,6 +35,7 @@ class StrategyIntelligence:
     analogues: pd.DataFrame
     score: StrategyScore
     backtest: BacktestResult
+    evidence: dict = field(default_factory=dict)  # holdout, regime breakdown, frequency, cost drag (display only)
 
 
 @dataclass
@@ -53,6 +56,7 @@ class PipelineOutput:
     regime_clarity: float | None = None  # heuristic 0-1: margin between top scores + agreement with the axes
     regime_age_bars: int | None = None  # bars since the label last changed
     regime_series: pd.DataFrame | None = None  # label per bar (smoothed), for the history chart
+    provenance: dict = field(default_factory=dict)  # source, LIVE/DELAYED/HISTORICAL/SIMULATED, last bar, age, quality
 
 
 def run_pipeline(
@@ -113,6 +117,7 @@ def run_pipeline(
             metrics=backtest.metrics, market=market,
         )
 
+        evidence = _strategy_evidence(backtest.trades, quantity, market, regime_series, ohlcv)
         strategy_intel.append(
             StrategyIntelligence(
                 strategy_name=strategy.name,
@@ -121,6 +126,7 @@ def run_pipeline(
                 analogues=assessment.analogues,
                 score=assessment.score,
                 backtest=backtest,
+                evidence=evidence,
             )
         )
         scores.append(assessment.score)
@@ -154,7 +160,36 @@ def run_pipeline(
         regime_clarity=float(last["clarity"]),
         regime_age_bars=int(last["age_bars"]),
         regime_series=regime_series,
+        provenance=build_provenance(metadata, now_ist(), profile_for(instrument), _timeframe_minutes(timeframe)),
     )
+
+
+def _strategy_evidence(trades, quantity: int, market: str, regime_series: pd.DataFrame, ohlcv: pd.DataFrame) -> dict:
+    """Display-only evidence for one strategy; a failure here must never break the pipeline."""
+    try:
+        from quant_intelligence.backtesting.engine import net_r_multiple
+        from quant_intelligence.research.evidence import build_strategy_evidence
+
+        rows = [t for t in trades if t.r_multiple is not None]
+        if not rows:
+            return {"n_trades": 0}
+        by_ts = regime_series.drop_duplicates("timestamp").set_index("timestamp")["label"]
+        return build_strategy_evidence(
+            rows,
+            net_r=[net_r_multiple(t, quantity, market) for t in rows],
+            gross_r=[t.r_multiple for t in rows],
+            entry_ts=[t.setup.timestamp for t in rows],
+            regime_labels=[str(by_ts.get(t.setup.timestamp, "UNKNOWN")) for t in rows],
+            n_trading_days=int(pd.to_datetime(ohlcv["timestamp"]).dt.date.nunique()),
+        )
+    except Exception as exc:
+        log_event("pipeline", f"Strategy evidence unavailable: {exc}", level="WARNING")
+        return {}
+
+
+def _timeframe_minutes(timeframe: str) -> int:
+    digits = "".join(ch for ch in timeframe if ch.isdigit())
+    return int(digits) if digits else 5
 
 
 def default_quantity(instrument: str, fallback: int = 50) -> int:

@@ -14,7 +14,9 @@ from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.ranking.ranking_engine import tradable
 from quant_intelligence.risk.risk_engine import MAX_QUOTE_AGE_SEC, MAX_SLIPPAGE_STOP_FRACTION, MAX_SPREAD_PCT
 from quant_intelligence.ui import backtest_workbench as wb
-from quant_intelligence.ui.decision_view import explanation_rows, global_rows
+from quant_intelligence.ui.decision_view import (
+    evidence_rows, explanation_rows, global_rows, multiple_testing_note, regime_breakdown_rows,
+)
 from quant_intelligence.utils.timeutil import now_ist
 
 
@@ -84,6 +86,9 @@ def overview(output) -> dict:
         "counts": {"evaluated": len(output.strategy_intel),
                    "eligible": sum(1 for s in output.strategy_intel if s.score.eligible)},
         "strategies": explanation_rows(output),
+        "provenance": output.provenance,
+        "evidence": evidence_rows(output),
+        "multiple_testing_note": multiple_testing_note(output),
         "mode": mode_info(),
     })
 
@@ -100,6 +105,8 @@ def strategy_detail(output, name: str) -> dict | None:
         "global_backtest": glob,
         "global_metrics": si.global_metrics,
         "conditional_metrics": si.conditional_metrics,
+        "evidence": si.evidence,
+        "by_regime": regime_breakdown_rows(output, name),
         "score_components": si.score.components,
         "note": "Historical statistics from past trades, net of modelled costs where stated. Not a prediction.",
     })

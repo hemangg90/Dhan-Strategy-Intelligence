@@ -74,8 +74,10 @@ def _age_text(ts) -> str:
 
 quality = output.data_quality_status
 ok_quality = quality == "OK"
+_prov = output.provenance or {}
 mode_chips = [
     chip(f"Data {quality}", "good" if ok_quality else "critical"),
+    chip(_prov.get("mode", "n/a"), "good" if _prov.get("mode") == "LIVE" else "warning" if _prov.get("mode") == "DELAYED" else "neutral"),
     chip("PAPER MODE", "info"),
     chip("LIVE ORDERS LOCKED" if SETTINGS.demo_lockdown else "Orders simulated", "neutral"),
 ]

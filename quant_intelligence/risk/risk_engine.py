@@ -28,6 +28,7 @@ shrink in a bad stretch instead of staying full until the hard drawdown veto sto
 """
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 import json
 import math
@@ -102,7 +103,14 @@ def _snapshot(trade: ProposedTrade) -> dict:
             "entry": float(trade.entry_price), "stop": float(trade.stop_price), "target": float(trade.target_price)}
 
 
+# A preview runs the very same checks but leaves no trace: no audit row and no approval a broker could spend. It is a
+# context variable, so a preview in one thread can never switch off auditing for a real evaluation in another.
+_PREVIEW: contextvars.ContextVar[bool] = contextvars.ContextVar("risk_preview", default=False)
+
+
 def _note_approval(decision_id: str, snapshot: dict | None = None) -> None:
+    if _PREVIEW.get():
+        return
     with _approvals_lock:
         now = time.monotonic()
         for k in [k for k, (t, _) in _approvals.items() if now - t > APPROVAL_TTL_SEC]:
@@ -156,6 +164,7 @@ class RiskDecision:
     approved: bool
     reason: str
     checks: dict = field(default_factory=dict)
+    preview: bool = False  # True: nothing was recorded and no approval was issued
 
 
 def _pct(amount: float, equity: float) -> float:
@@ -230,6 +239,19 @@ def evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime
         decision_id = new_decision_id("RISK")
         log_event("risk_engine", f"Risk evaluation raised {type(exc).__name__}: trade blocked", level="ERROR", decision_id=decision_id)
         return _veto(decision_id, f"Risk evaluation failed ({type(exc).__name__}): trade blocked", {"evaluation_error": True})
+
+
+def preview_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime | None = None) -> RiskDecision:
+    """What `evaluate_trade` would decide right now, without recording it or issuing an approval. For showing a user the
+    real verdict on a candidate. Same checks, same order, same fail-closed behaviour; an error is a veto. The returned
+    `checks` hold every check reached; evaluation stops at the first failure, exactly as the real one does."""
+    token = _PREVIEW.set(True)
+    try:
+        decision = evaluate_trade(account, trade, now)
+    finally:
+        _PREVIEW.reset(token)
+    decision.preview = True
+    return decision
 
 
 def _evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime | None = None) -> RiskDecision:
@@ -471,6 +493,8 @@ def _json_safe(details: dict) -> dict:
 
 def _persist_risk_event(decision_id: str, event_type: str, reason: str, details: dict) -> bool:
     """Write the audit row. Returns whether it was stored (a failure is logged, never silent)."""
+    if _PREVIEW.get():
+        return True  # preview: deliberately not recorded
     try:
         from quant_intelligence.database.db import get_session
         from quant_intelligence.database.models import RiskEvent

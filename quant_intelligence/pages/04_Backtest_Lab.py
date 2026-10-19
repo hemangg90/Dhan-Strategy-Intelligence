@@ -5,6 +5,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 import datetime as dt
 
+import pandas as pd
+
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -234,6 +236,34 @@ with right:
         colors = [GREEN if v >= 0 else RED for v in daily.values]
         fig = go.Figure(go.Bar(x=daily.index, y=daily.values, marker_color=colors, name="Daily return"))
         st.plotly_chart(_chart_layout(fig, 220, ".1f"), width="stretch", key="wb_daily")
+
+    with st.expander("Parameter sensitivity (settings at 0.8x and 1.2x)"):
+        last_inputs = st.session_state.get("wb_last_inputs")
+        if not last_inputs:
+            st.caption("Run a new backtest first; sensitivity reuses its data and parameters.")
+        else:
+            st.caption("Re-runs the strategy with each numeric setting moved 20% down and up. A result that flips sign or "
+                       "vanishes was probably fitted to this sample. It reuses the same data, so it shows fragility, not proof.")
+            if st.button("Run sensitivity"):
+                from quant_intelligence.research.pipeline import default_quantity
+                from quant_intelligence.research.sensitivity import parameter_sensitivity
+
+                with st.spinner("Re-running the strategy with changed settings..."):
+                    st.session_state["wb_sensitivity"] = parameter_sensitivity(
+                        last_inputs["strategy_name"], last_inputs["ohlcv"], compute_features(last_inputs["ohlcv"]),
+                        last_inputs["instrument"], default_quantity(last_inputs["instrument"]), last_inputs["params"])
+            sens = st.session_state.get("wb_sensitivity")
+            if sens and sens["strategy"] == last_inputs["strategy_name"]:
+                base = sens["base"]
+                base_r = "n/a" if base["mean_net_r"] is None else f"{base['mean_net_r']:.3f}"
+                st.markdown(f"Base: **{base['n_trades']} trades**, net R per trade **{base_r}**")
+                st.dataframe(pd.DataFrame(sens["rows"]), hide_index=True, width="stretch")
+                if sens["sign_survives"] is None:
+                    st.info("Too few trades to judge whether the sign holds.")
+                elif sens["sign_survives"]:
+                    st.success(f"The sign of the result held in all {sens['variants_compared']} comparable variants.")
+                else:
+                    st.warning("The sign of the result changed in at least one variant: this result is fragile.")
 
     with st.expander("Walk-forward (4 folds)"):
         last = st.session_state.get("wb_last_inputs")

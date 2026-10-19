@@ -10,7 +10,10 @@ from quant_intelligence.ranking.ranking_engine import tradable
 from quant_intelligence.risk.risk_engine import MAX_QUOTE_AGE_SEC, MAX_SPREAD_PCT
 from quant_intelligence.ui.components import chip
 from quant_intelligence.ui.dashboard import decision_banner, hero_header, kpi_cards, ranking_table
-from quant_intelligence.ui.decision_view import explanation_rows, global_rows
+from quant_intelligence.data.provenance import strip_text
+from quant_intelligence.ui.decision_view import (
+    evidence_rows, explanation_rows, global_rows, multiple_testing_note, regime_breakdown_rows,
+)
 from quant_intelligence.ui.state import init_session_state, run_pipeline_cached
 from quant_intelligence.ui.theme import apply_theme
 from quant_intelligence.utils.timeutil import now_ist
@@ -48,6 +51,11 @@ kpi_cards([
     {"label": "Regime", "value": str(output.regime_label).replace("_", " ").title(),
      "sub": f"top score share {output.regime_confidence * 100:.0f}% (heuristic)"},
 ])
+prov = output.provenance
+if prov:
+    st.caption(strip_text(prov))
+    if prov["mode"] != "LIVE":
+        st.info(f"{prov['mode']}: {prov['mode_meaning']}")
 for issue in output.data_quality_issues or []:
     st.warning(str(issue))
 
@@ -59,6 +67,17 @@ if not (ranking.is_no_trade or not ok):
 
 st.subheader("Why each strategy is ranked, eligible or rejected")
 ranking_table(explanation_rows(output), show_why=True)
+note = multiple_testing_note(output)
+if note:
+    st.caption(note)
+with st.expander("More evidence: profit factor, trade frequency, costs and holdout"):
+    st.dataframe(evidence_rows(output), width="stretch", hide_index=True)
+    st.caption("Holdout = the strategy's chronologically last 30% of trades, compared with the earlier 70%. Descriptive: with "
+               "few trades a difference can easily be chance. Profit factor is computed on net R.")
+with st.expander("How each strategy performed by market regime at entry"):
+    pick = st.selectbox("Strategy", [s.strategy_name for s in output.strategy_intel], key="dc_regime_strategy")
+    st.dataframe(regime_breakdown_rows(output, pick), width="stretch", hide_index=True)
+    st.caption("Regime labels are heuristic and display-only. Small groups say little.")
 with st.expander("Unconditional backtest statistics (gross of costs)"):
     st.dataframe(global_rows(output), width="stretch", hide_index=True)
 
