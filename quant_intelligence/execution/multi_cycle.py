@@ -51,6 +51,21 @@ def run_multi_instrument_cycle(
 
     all_symbols = [(s, "index") for s in index_symbols] + [(s, "stock") for s in stock_symbols]
 
+    def check_exits() -> None:
+        """Stop/target check of every open option position against its live premium."""
+        nonlocal pnl_delta
+        if not client.is_configured():
+            return
+        try:
+            with broker_lock:
+                for e in monitor_option_positions(broker, client):
+                    pnl_delta += e["position"]["net_pnl"]
+        except Exception as e:
+            rows.append({"symbol": "-", "type": "monitor", "strategy": "-", "status": "MONITOR_ERROR", "detail": str(e)})
+
+    # Exits first: a slow scan of many instruments must not delay a stop or target that is already hit.
+    check_exits()
+
     for symbol, kind in all_symbols:
         if profile_for(symbol).name == "MCX":
             kind = "commodity"
@@ -92,16 +107,21 @@ def run_multi_instrument_cycle(
                 )
                 continue
 
-        with broker_lock:
-            account = get_account()  # fresh cash/exposure: another runner may have filled meanwhile
-            cycle = run_auto_option_cycle(
-                output, symbol, broker, client, triggered_chain if triggered_chain is not None else chain_provider, account,
-                allowed, move_note,
-            )
-            if cycle.order is not None:
-                if on_fill is not None and cycle.order.status == "FILLED":
-                    on_fill()
-                account = get_account()  # re-sync exposure/trade-count after a fill
+        try:
+            with broker_lock:
+                account = get_account()  # fresh cash/exposure: another runner may have filled meanwhile
+                cycle = run_auto_option_cycle(
+                    output, symbol, broker, client, triggered_chain if triggered_chain is not None else chain_provider, account,
+                    allowed, move_note,
+                )
+                if cycle.order is not None:
+                    if on_fill is not None and cycle.order.status == "FILLED":
+                        on_fill()
+                    account = get_account()  # re-sync exposure/trade-count after a fill
+        except Exception as e:  # one instrument's failure must not skip the other instruments or the exit check below
+            rows.append({"symbol": symbol, "type": kind, "strategy": "-", "status": "CYCLE_ERROR",
+                         "detail": f"{type(e).__name__}: {e}"})
+            continue
         rows.append(
             {
                 "symbol": symbol,
@@ -117,11 +137,5 @@ def run_multi_instrument_cycle(
 
     # Check every open option position's live premium against its stop/target once per cycle
     # (not only right after a new fill), so exits are never skipped on quiet cycles.
-    if client.is_configured():
-        try:
-            with broker_lock:
-                for e in monitor_option_positions(broker, client):
-                    pnl_delta += e["position"]["net_pnl"]
-        except Exception as e:
-            rows.append({"symbol": "-", "type": "monitor", "strategy": "-", "status": "MONITOR_ERROR", "detail": str(e)})
+    check_exits()
     return rows, pnl_delta

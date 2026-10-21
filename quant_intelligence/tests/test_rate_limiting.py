@@ -325,6 +325,27 @@ def test_chain_error_for_a_triggered_instrument_is_reported_and_the_scan_continu
     assert [r["status"] for r in rows][0] == "CHAIN_ERROR" and len(rows) == 2
 
 
+def test_exits_are_checked_before_the_scan_and_survive_a_failing_instrument(monkeypatch):
+    from quant_intelligence.execution import multi_cycle
+
+    calls = []
+    monkeypatch.setattr(multi_cycle, "run_pipeline", lambda sym, *a: SimpleNamespace(ranking=SimpleNamespace(
+        tie_break=False, is_no_trade=False, selected_strategy="ORB")))
+    monkeypatch.setattr(multi_cycle, "chain_needed", lambda *a: False)
+
+    def boom(*a, **k):
+        calls.append("scan")
+        raise RuntimeError("order path failed")
+
+    monkeypatch.setattr(multi_cycle, "run_auto_option_cycle", boom)
+    monkeypatch.setattr(multi_cycle, "monitor_option_positions", lambda *a, **k: calls.append("exits") or [])
+    rows, _ = multi_cycle.run_multi_instrument_cycle(
+        ["A", "B"], [], "5min", 30, broker=None, client=SimpleNamespace(is_configured=lambda: True), get_account=lambda: None
+    )
+    assert calls == ["exits", "scan", "scan", "exits"]  # before the scan, and again after it despite both failing
+    assert [r["status"] for r in rows] == ["CYCLE_ERROR", "CYCLE_ERROR"]
+
+
 def test_chain_needed_is_false_for_no_trade_and_open_positions_true_for_chain_strategies(monkeypatch):
     from quant_intelligence.execution import auto_trader
     from quant_intelligence.strategies.registry import CHAIN_AWARE_STRATEGY_NAMES

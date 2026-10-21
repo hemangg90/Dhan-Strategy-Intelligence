@@ -228,3 +228,21 @@ def test_the_exact_approved_order_is_sent(monkeypatch):
     broker = _live_broker(monkeypatch)
     assert broker.place_order(_order(_approved_decision())).status == "PENDING"
     assert broker.client.place_order.call_count == 1
+
+
+def test_two_positions_on_one_contract_are_both_checked_for_exit():
+    from quant_intelligence.execution import position_monitor
+
+    broker = PaperBroker(starting_capital=1_000_000)
+    for _ in range(2):
+        broker.place_order(OrderRequest(strategy_name="X", instrument="NIFTY", direction="LONG", quantity=65, price=100.0,
+                                        stop_price=80.0, target_price=130.0, option_type="CE", transaction_type="BUY",
+                                        security_id="555"), market_price=100.0)
+    assert len(broker.get_open_positions()) == 2
+    original = position_monitor._fetch_quotes
+    position_monitor._fetch_quotes = lambda *a, **k: {"555": {"last_price": 135.0}}  # past the target
+    try:
+        events = position_monitor.monitor_option_positions(broker, api_client=object())
+    finally:
+        position_monitor._fetch_quotes = original
+    assert len(events) == 2 and not broker.get_open_positions()

@@ -88,14 +88,14 @@ def monitor_option_positions(broker: PaperBroker, api_client) -> list[dict]:
     if not option_positions:
         return events
 
-    by_security_id = {p["security_id"]: p for p in option_positions if p.get("security_id")}
-    if not by_security_id:
+    priced = [p for p in option_positions if p.get("security_id")]  # a list: two positions on one contract are both checked
+    if not priced:
         return events
 
     quotes = _fetch_quotes(api_client, option_positions, max_age=1.0)  # exits: fresh, never stale
 
-    for security_id, pos in by_security_id.items():
-        quote = quotes.get(str(security_id))
+    for pos in priced:
+        quote = quotes.get(str(pos["security_id"]))
         if not quote:
             continue
         premium = quote.get("last_price")
