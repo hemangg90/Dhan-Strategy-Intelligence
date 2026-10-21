@@ -188,7 +188,8 @@ def test_universe_rows_carry_a_currency_label(tmp_path, monkeypatch):
     monkeypatch.setattr(universe, "CACHE_DIR", tmp_path)
     df.to_parquet(tmp_path / "NIFTY_5min.parquet", index=False)
     [row] = universe.scan_universe("5min", [("NIFTY", "index")])
-    assert row["mode"] == "HISTORICAL"  # August candles judged now: the session is not live on that bar
+    # Old candles are never LIVE: HISTORICAL when the market is closed now, DELAYED when it is open and the bar is old.
+    assert row["mode"] in ("HISTORICAL", "DELAYED")
 
 
 # --------------------------------------------------------------------------------- guide & reports

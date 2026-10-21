@@ -240,6 +240,9 @@ class TradingEngine(ScanRunner):
                 from quant_intelligence.database.models import Position
 
                 init_db()  # a page can be the first thing loaded; make sure new columns exist
+                from quant_intelligence.risk.limit_overrides import load_persisted
+
+                load_persisted()  # limits changed from the Risk Control page survive a restart
                 day_start = dt.datetime.combine(today_ist(), dt.time.min)
                 cols = [c.name for c in Position.__table__.columns if c.name != "id"]
                 with get_session() as session:

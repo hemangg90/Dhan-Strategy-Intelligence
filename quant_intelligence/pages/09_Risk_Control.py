@@ -39,8 +39,65 @@ col8.metric("Losing streak today", loss_streak(account))
 if multiplier < 1:
     st.warning(f"New trades are sized at {multiplier:.0%} of normal: {why}.")
 
-st.subheader("Configured limits")
-st.json(dataclasses.asdict(limits))
+st.subheader("Risk limits")
+from quant_intelligence.database.db import is_durable  # noqa: E402
+from quant_intelligence.risk import limit_overrides as LO  # noqa: E402
+
+if SETTINGS.demo_lockdown:
+    st.info("Demo lockdown is on: limits are shown but cannot be changed here.")
+else:
+    st.caption(
+        "Tightening a limit applies at once. Loosening needs the confirmation tick and a reason. Each value has a hard "
+        "ceiling the app will not exceed. New values apply to new trades; open positions are not re-judged."
+    )
+    with st.form("risk_limits_form"):
+        entered: dict = {}
+        cols = st.columns(2)
+        for i, row in enumerate(LO.rows()):
+            kind_float = row["kind"] == "float"
+            low = 0.0 if row["off_allowed"] else float(row["lo"])
+            entered[row["field"]] = cols[i % 2].number_input(
+                f"{row['label']} ({row['unit']})" + (" - changed" if row["changed"] else ""),
+                min_value=low if kind_float else int(low), max_value=float(row["hi"]) if kind_float else int(row["hi"]),
+                value=float(row["current"]) if kind_float else int(row["current"]),
+                step=0.05 if kind_float else 1, help=f"{row['help']} Allowed {row['lo']:g} to {row['hi']:g}. Default {row['default']:g}.",
+                key=f"lim_{row['field']}")
+        reason = st.text_input("Reason (needed when loosening)", key="lim_reason")
+        confirm = st.checkbox("I understand this loosens a safety limit", key="lim_confirm")
+        apply_clicked = st.form_submit_button("Apply changes")
+    if apply_clicked:
+        result = LO.apply(entered, reason=reason, confirm_loosen=confirm, kill_switch=ENGINE.kill_switch)
+        if not result.ok:
+            for problem in result.errors:
+                st.error(problem)
+        elif not result.applied:
+            st.info("Nothing changed.")
+        else:
+            for field, move in result.applied.items():
+                st.success(f"{LO.BY_FIELD[field].label}: {move['old']:g} -> {move['new']:g} ({move['direction']})")
+            st.caption("Applied. The figures above refresh on the next interaction.")
+    with st.expander("Reset to defaults"):
+        st.caption("Back to the values the app started with (environment or built-in defaults) and forget the saved changes.")
+        reset_ok = st.checkbox("I understand this may loosen limits that I tightened", key="lim_reset_confirm")
+        if st.button("Reset all limits to defaults"):
+            outcome = LO.reset_to_defaults(reason=reason or "reset to defaults", confirm_loosen=reset_ok, kill_switch=ENGINE.kill_switch)
+            for problem in outcome.errors:
+                st.error(problem)
+            if outcome.ok:
+                st.success("Limits reset to defaults.")
+    if not is_durable():
+        st.caption(
+            "Saved changes live in this app's local database. On hosts with a temporary disk (such as Streamlit Cloud) they "
+            "are lost when the app restarts: set DATABASE_URL to a hosted database, or put the values in the app's Secrets, "
+            "to keep them. The app is shared: anyone who can open this page can change these limits."
+        )
+    changes = LO.recent_changes()
+    if changes:
+        st.markdown("**Recent limit changes**")
+        st.dataframe(changes, width="stretch", hide_index=True)
+
+with st.expander("All configured limits (read-only)"):
+    st.json(dataclasses.asdict(SETTINGS.risk))
 
 with st.expander("Reset drawdown peak"):
     st.caption(

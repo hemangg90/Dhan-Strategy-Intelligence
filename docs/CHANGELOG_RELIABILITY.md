@@ -88,3 +88,8 @@ Newest first. "Compat" notes anything that changes behaviour or stored data. Tes
 * `reports/trace.py`: decision -> risk -> order -> fill -> position trace, orphans, rejected-decision reader; new tabs in Positions & Orders.
 * Settings & Data Status and Guide pages; Daily Report gains rejected setups, data-quality findings, methodology, labels, printable HTML.
 * Details and limits: `CANDIDATE_WORKFLOW.md`.
+
+## Editable risk limits (2026-10-21)
+* `risk/limit_overrides.py`, Risk Control page: ten core limits can be changed in the app within hard ranges; loosening needs confirmation and a reason; changes are saved, audited (`LIMIT_CHANGE`) and reloaded at start. See `RISK_CONTROLS.md`.
+* Exits are checked before the scan and a failing instrument no longer aborts the cycle; positions on the same contract are all monitored.
+* The rejected-token banner clears when a new token is saved.

@@ -304,6 +304,16 @@ class RiskEvent(Base):
     details = Column(JSON)
 
 
+class RiskLimitOverride(Base):
+    """A risk limit changed from the app (risk/limit_overrides.py). One row per field; reloaded at start."""
+    __tablename__ = "risk_limit_overrides"
+
+    field = Column(String(48), primary_key=True)
+    value = Column(Float, nullable=False)
+    updated_at = Column(DateTime, default=utcnow)
+    reason = Column(Text)
+
+
 class SystemEvent(Base):
     __tablename__ = "system_events"
 

@@ -35,6 +35,11 @@ def risk_rows() -> list[dict]:
         ("Strategy daily loss stop", f"{r.strategy_max_losses_per_day} losses", "A strategy that lost this many today is done."),
         ("Profit lock", f"at {r.profit_lock_trigger_pct:g}%, give back {r.profit_lock_giveback:.0%}", "Stops trading if a good day is being given back."),
     ]
+    from quant_intelligence.risk.limit_overrides import rows as editable_rows
+
+    changed = [f"{x['label']} {x['default']:g} -> {x['current']:g}" for x in editable_rows() if x["changed"]]
+    if changed:
+        rows.append(("Changed from the defaults", "; ".join(changed), "Set on the Risk Control page or in the environment."))
     return [{"Limit": a, "Value": b, "Meaning": c} for a, b, c in rows]
 
 

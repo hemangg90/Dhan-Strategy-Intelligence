@@ -33,6 +33,9 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Nifty Intelligence", docs_url=None, redoc_url=None, lifespan=_lifespan)
 init_db()
+from quant_intelligence.risk.limit_overrides import load_persisted  # noqa: E402
+
+load_persisted()  # the read-only site shows the limits the app is actually using
 
 
 def _output(instrument: str, timeframe: str, refresh: bool):
