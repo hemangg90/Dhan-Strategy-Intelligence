@@ -562,8 +562,8 @@ SQLite even with no `.env`.
 Watchlists live in code: **`config/watchlist.py`** (15 stocks and 8 MCX commodities).
 
 Stocks: RELIANCE, BHARTIARTL, HDFCBANK, ICICIBANK, SBIN, TCS, BAJFINANCE, LT, LICI, SUNPHARMA, HINDUNILVR,
-TITAN, ADANIPORTS, INFY, KOTAKBANK. Commodities: CRUDEOIL, CRUDEOILM, NATURALGAS, GOLD, GOLDM, SILVER,
-SILVERM, COPPER (lot multipliers come from MCX's published specs, not Dhan - verify before trusting P&L).
+TITAN, ADANIPORTS, INFY, KOTAKBANK. Commodities: CRUDEOIL, CRUDEOILM, NATURALGAS (gold, silver and copper were removed from the
+watchlist; lot multipliers come from MCX's published specs, not Dhan - verify before trusting P&L).
 Use real NSE symbols (e.g. `HDFCBANK`, `LICI`).
 
 ## Deploying on Streamlit Community Cloud

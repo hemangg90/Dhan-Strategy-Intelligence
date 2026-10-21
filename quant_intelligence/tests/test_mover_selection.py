@@ -268,7 +268,7 @@ def test_the_frame_has_one_row_per_instrument_and_never_invents_a_zero():
     nifty = df[df["symbol"] == "NIFTY"].iloc[0]
     assert nifty["change_pct"] == pytest.approx(1.0) and nifty["fresh"] and nifty["has_data"]
     assert df[df["symbol"] == "TCS"].iloc[0]["change_pct"] == pytest.approx(-2.0)
-    gone = df[df["symbol"] == "GOLD"].iloc[0]
+    gone = df[df["symbol"] == "NATURALGAS"].iloc[0]
     assert pd.isna(gone["change_pct"]) and not gone["has_data"]
 
 
@@ -287,7 +287,7 @@ def test_window_change_uses_the_close_n_sessions_back():
 
 def test_groups_cover_the_whole_watchlist():
     groups = heatmap_data.groups_of()
-    assert "NIFTY" in groups["Index"] and "GOLD" in groups["Commodity"] and len(groups["Stock"]) >= 10
+    assert "NIFTY" in groups["Index"] and set(groups["Commodity"]) == {"CRUDEOIL", "CRUDEOILM", "NATURALGAS"} and len(groups["Stock"]) >= 10
 
 
 # ---------------------------------------------------------------- the page
