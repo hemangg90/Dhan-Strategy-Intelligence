@@ -19,8 +19,9 @@ def mode_rows() -> list[dict]:
     ]
 
 
-def risk_rows() -> list[dict]:
-    r = SETTINGS.risk
+def risk_rows(market: str = "NSE") -> list[dict]:
+    """The risk limits of one market (NSE and MCX each have their own set)."""
+    r = SETTINGS.risk_mcx if market.upper() == "MCX" else SETTINGS.risk
     rows = [
         ("Max risk per trade", f"{r.max_risk_per_trade_pct:g}% of equity", "What one stopped trade may cost; sizing divides this by the stop distance."),
         ("Max capital per trade", f"{r.max_capital_per_trade_pct:g}% of equity", "Cap on premium x quantity (0 disables)."),
@@ -37,9 +38,9 @@ def risk_rows() -> list[dict]:
     ]
     from quant_intelligence.risk.limit_overrides import rows as editable_rows
 
-    changed = [f"{x['label']} {x['default']:g} -> {x['current']:g}" for x in editable_rows() if x["changed"]]
+    changed = [f"{x['label']} {x['default']:g} -> {x['current']:g}" for x in editable_rows(market) if x["changed"]]
     if changed:
-        rows.append(("Changed from the defaults", "; ".join(changed), "Set on the Risk Control page or in the environment."))
+        rows.append(("Changed from the defaults", "; ".join(changed), "Set on the Risk Control page of that market or in the environment."))
     return [{"Limit": a, "Value": b, "Meaning": c} for a, b, c in rows]
 
 

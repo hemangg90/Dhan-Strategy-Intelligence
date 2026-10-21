@@ -17,8 +17,8 @@ import streamlit as st
 from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.database.db import get_session, is_durable
 from quant_intelligence.database.models import Fill, Order, Position
-from quant_intelligence.execution.capital import capital_summary
-from quant_intelligence.execution.engine import ENGINE
+from quant_intelligence.execution.capital import combined_capital_summary
+from quant_intelligence.execution.engine import ENGINE, MCX_ENGINE
 from quant_intelligence.reports.history_io import import_positions
 from quant_intelligence.reports.performance import unresolved
 from quant_intelligence.ui import format as F
@@ -68,7 +68,7 @@ def live_kpis() -> None:
     today = _today(hist)
     realised = float(today["net_pnl"].sum()) if len(today) else 0.0
     unrealised = float(open_df["unrealised_net"].sum(skipna=True)) if len(open_df) else 0.0
-    cap = capital_summary(ENGINE.broker)
+    cap = combined_capital_summary(ENGINE.broker, MCX_ENGINE.broker)  # NSE and MCX are separate accounts
     stats = trade_stats(today)
     day = realised + unrealised
     spark = list(equity_curve(today)["equity"]) if len(today) else []
@@ -82,7 +82,7 @@ def live_kpis() -> None:
              "delta": f"{cap['capital_used'] / cap['account_value'] * 100:.1f}% of account" if cap["account_value"] else None},
             {"label": "Available", "value": F.inr(cap["available"]), "help": "Account value minus capital in open BUY positions"},
             {"label": "Account value", "value": F.inr(cap["account_value"]),
-             "help": f"Starting capital {F.inr(cap['starting_capital'])} + realised P&L booked by the paper broker"},
+             "help": f"NSE + MCX accounts: starting capital {F.inr(cap['starting_capital'])} + realised P&L booked by the paper brokers"},
             {"label": "Open positions", "value": str(len(open_df))},
             {"label": "Win rate today",
              "value": f"{stats['win_rate']:.0f}%" if stats["win_rate"] is not None else "–",

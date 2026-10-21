@@ -93,3 +93,7 @@ Newest first. "Compat" notes anything that changes behaviour or stored data. Tes
 * `risk/limit_overrides.py`, Risk Control page: ten core limits can be changed in the app within hard ranges; loosening needs confirmation and a reason; changes are saved, audited (`LIMIT_CHANGE`) and reloaded at start. See `RISK_CONTROLS.md`.
 * Exits are checked before the scan and a failing instrument no longer aborts the cycle; positions on the same contract are all monitored.
 * The rejected-token banner clears when a new token is saved.
+
+## Separate NSE and MCX accounts (2026-10-21)
+* NSE and MCX each have their own paper account, risk limits, drawdown and kill switch (`MCX_ENGINE`, `SETTINGS.risk_mcx`, `AccountState.market`); separate Risk Control pages for each. See `RISK_CONTROLS.md`.
+* Open-position views, manual exit, square-off, the end-of-day job and the Candidate risk preview now use the account of the instrument's own market.

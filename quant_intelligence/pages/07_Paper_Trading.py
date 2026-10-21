@@ -60,7 +60,7 @@ page_header(
 scope = st.segmented_control("Scope", ["Single instrument", "All instruments"], default="Single instrument",
                              key="pt_scope", label_visibility="collapsed") or "Single instrument"
 if scope == "All instruments":
-    st.caption(f"Scans {', '.join(SETTINGS.option_underlyings)} and the stock watchlist in one pass. One paper account and one risk engine are shared.")
+    st.caption(f"Scans {', '.join(SETTINGS.option_underlyings)} and the stock watchlist in one pass. They share the NSE paper account and the NSE risk limits.")
     render_multi_instrument_panel()
     st.stop()
 

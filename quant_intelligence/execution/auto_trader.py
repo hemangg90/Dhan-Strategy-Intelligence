@@ -36,7 +36,7 @@ from quant_intelligence.options.premium_model import PremiumSizingError, transla
 from quant_intelligence.research.pipeline import PipelineOutput
 from quant_intelligence.execution.capital import capital_required, capital_summary
 from quant_intelligence.ranking.ranking_engine import TIE_BREAK_TAG, tradable
-from quant_intelligence.risk.risk_engine import AccountState, ProposedTrade, evaluate_trade, risk_multiplier
+from quant_intelligence.risk.risk_engine import AccountState, ProposedTrade, evaluate_trade, limits_for, risk_multiplier
 from quant_intelligence.strategies.registry import CHAIN_AWARE_STRATEGY_NAMES, get_strategy
 
 
@@ -77,10 +77,10 @@ def size_position(
     if stop_distance <= 0 or account.equity <= 0:
         return 0
     multiplier, _ = risk_multiplier(account)
-    budget = account.equity * (SETTINGS.risk.max_risk_per_trade_pct * 0.9 * multiplier) / 100.0
+    budget = account.equity * (limits_for(account.market).max_risk_per_trade_pct * 0.9 * multiplier) / 100.0
     raw_qty = budget / stop_distance
     lots = max(int(raw_qty // lot_size), 0)
-    cap_pct = SETTINGS.risk.max_capital_per_trade_pct
+    cap_pct = limits_for(account.market).max_capital_per_trade_pct
     if cap_pct > 0 and entry_price > 0:
         capital_budget = account.equity * cap_pct / 100.0
         lots = min(lots, int(capital_budget // (entry_price * lot_size)))
@@ -95,7 +95,7 @@ NO_SIZE_PREFIX = "NO SIZE:"  # recognised by the decision log (reports/decision_
 def risk_budget(account: AccountState) -> tuple[float, float, str]:
     """(rupees one stopped trade may lose right now, the risk multiplier, why the multiplier is below 1)."""
     multiplier, why = risk_multiplier(account)
-    return account.equity * (SETTINGS.risk.max_risk_per_trade_pct * 0.9 * multiplier) / 100.0, multiplier, why
+    return account.equity * (limits_for(account.market).max_risk_per_trade_pct * 0.9 * multiplier) / 100.0, multiplier, why
 
 
 def _zero_size_reason(account: AccountState, entry_price: float | None = None, stop_price: float | None = None,
@@ -110,7 +110,7 @@ def _zero_size_reason(account: AccountState, entry_price: float | None = None, s
         if one_lot_risk > budget > 0:
             return (f"{NO_SIZE_PREFIX} one lot ({lot_size}) would lose Rs {one_lot_risk:,.0f} at its stop, above the Rs {budget:,.0f} "
                     f"allowed per trade{cut} - not traded (a tighter stop or a larger account would fit it).")
-        cap_pct = SETTINGS.risk.max_capital_per_trade_pct
+        cap_pct = limits_for(account.market).max_capital_per_trade_pct
         if cap_pct > 0 and entry_price > 0 and entry_price * lot_size > account.equity * cap_pct / 100.0:
             return (f"{NO_SIZE_PREFIX} one lot costs Rs {entry_price * lot_size:,.0f} in premium, above the per-trade capital cap "
                     f"of Rs {account.equity * cap_pct / 100.0:,.0f} ({cap_pct:g}% of equity).")

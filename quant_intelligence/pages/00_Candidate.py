@@ -13,7 +13,7 @@ from quant_intelligence.data.provenance import strip_text
 from quant_intelligence.ui.candidate import CURRENT_CANDIDATE, build_candidate
 from quant_intelligence.ui.components import chip
 from quant_intelligence.ui.dashboard import decision_banner, hero_header
-from quant_intelligence.ui.state import get_account_state, init_session_state, run_pipeline_cached
+from quant_intelligence.ui.state import account_state_for, init_session_state, run_pipeline_cached
 from quant_intelligence.ui.theme import apply_theme
 
 apply_theme()
@@ -37,7 +37,7 @@ try:
 except Exception:
     recent = []  # the outcome stage then reports "no paper trade yet"
 
-candidate = build_candidate(output, get_account_state(), recent)
+candidate = build_candidate(output, account_state_for(output.instrument), recent)
 
 prov = output.provenance or {}
 hero_header(

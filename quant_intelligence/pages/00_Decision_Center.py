@@ -81,8 +81,12 @@ with st.expander("How each strategy performed by market regime at entry"):
 with st.expander("Unconditional backtest statistics (gross of costs)"):
     st.dataframe(global_rows(output), width="stretch", hide_index=True)
 
-st.subheader("Independent risk engine")
-limits = SETTINGS.risk
+from quant_intelligence.risk.risk_engine import limits_for  # noqa: E402
+from quant_intelligence.utils.market_profile import profile_for  # noqa: E402
+
+_market = profile_for(output.instrument).name  # NSE and MCX have separate limits
+st.subheader(f"Independent risk engine ({_market} limits)")
+limits = limits_for(_market)
 st.markdown(
     "The risk engine sees only the account state and the proposed order, never the ranking. A top-ranked or "
     "tie-break strategy is vetoed exactly like any other. **Any failed mandatory check means NO TRADE.**"

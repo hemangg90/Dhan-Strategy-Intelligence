@@ -61,6 +61,13 @@ class AccountState:
     # False when today's P&L could not be established (e.g. a live broker that did not report it). The daily-loss limit
     # cannot be checked then, so the engine fails closed instead of treating the unknown as zero.
     daily_pnl_known: bool = True
+    # Which market's account this is ("NSE" or "MCX"). It selects the limit set the checks and the sizing use.
+    market: str = "NSE"
+
+
+def limits_for(market: str | None):
+    """The risk limits that apply to a market's account: MCX has its own set, everything else uses the NSE set."""
+    return SETTINGS.risk_mcx if (market or "").upper() == "MCX" else SETTINGS.risk
 
 
 @dataclass
@@ -106,6 +113,8 @@ def _snapshot(trade: ProposedTrade) -> dict:
 # A preview runs the very same checks but leaves no trace: no audit row and no approval a broker could spend. It is a
 # context variable, so a preview in one thread can never switch off auditing for a real evaluation in another.
 _PREVIEW: contextvars.ContextVar[bool] = contextvars.ContextVar("risk_preview", default=False)
+# The market whose account is being evaluated, so the audit row can say which market a veto or approval belongs to.
+_MARKET: contextvars.ContextVar[str] = contextvars.ContextVar("risk_market", default="NSE")
 
 
 def _note_approval(decision_id: str, snapshot: dict | None = None) -> None:
@@ -192,7 +201,7 @@ def risk_multiplier(account: AccountState) -> tuple[float, str]:
     The smallest of: the drawdown throttle (1.0 below DD_THROTTLE_START_PCT, falling linearly to
     DD_THROTTLE_FLOOR at MAX_DRAWDOWN_PCT), 0.5 once half the daily loss limit is used, and 0.5 after
     LOSS_STREAK_THROTTLE_AFTER consecutive losers today."""
-    limits = SETTINGS.risk
+    limits = limits_for(account.market)
     factors: list[tuple[float, str]] = [(1.0, "full size")]
 
     dd = drawdown_pct(account)
@@ -233,12 +242,15 @@ def _invalid_account_reason(account: AccountState) -> str | None:
 def evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime | None = None) -> RiskDecision:
     """Approve or veto a proposed trade. Fails closed: any unexpected error while evaluating is a veto, and an
     approval is only returned once its audit record has been persisted."""
+    market_token = _MARKET.set(str(getattr(account, "market", None) or "NSE").upper())
     try:
         return _evaluate_trade(account, trade, now)
     except Exception as exc:
         decision_id = new_decision_id("RISK")
         log_event("risk_engine", f"Risk evaluation raised {type(exc).__name__}: trade blocked", level="ERROR", decision_id=decision_id)
         return _veto(decision_id, f"Risk evaluation failed ({type(exc).__name__}): trade blocked", {"evaluation_error": True})
+    finally:
+        _MARKET.reset(market_token)
 
 
 def preview_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime | None = None) -> RiskDecision:
@@ -257,7 +269,7 @@ def preview_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime 
 def _evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetime | None = None) -> RiskDecision:
     decision_id = new_decision_id("RISK")
     checks: dict[str, bool] = {}
-    limits = SETTINGS.risk
+    limits = limits_for(account.market)
     now = now or now_ist()
 
     invalid_account = _invalid_account_reason(account)
@@ -500,7 +512,8 @@ def _persist_risk_event(decision_id: str, event_type: str, reason: str, details:
         from quant_intelligence.database.models import RiskEvent
 
         with get_session() as session:
-            session.add(RiskEvent(decision_id=decision_id, event_type=event_type, reason=reason, details=_json_safe(details)))
+            stored = {**_json_safe(details), "market": _MARKET.get()}  # which market's account this decision was about
+            session.add(RiskEvent(decision_id=decision_id, event_type=event_type, reason=reason, details=stored))
         return True
     except Exception as exc:  # a veto stands without its row, but a lost audit row must not be invisible
         log_event("risk_engine", f"Could not persist risk event {decision_id}: {type(exc).__name__}", level="ERROR")

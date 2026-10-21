@@ -53,10 +53,10 @@ class EodJob:
     def force_square_off(market: str) -> int:
         """Close paper positions still open after the close at the latest traded price. Returns how many closed."""
         from quant_intelligence.brokers.dhan_api_client import DhanApiClient
-        from quant_intelligence.execution.engine import ENGINE
+        from quant_intelligence.execution.engine import engine_for_market
         from quant_intelligence.execution.square_off import square_off_positions
 
-        owner = ENGINE.owner
+        owner = engine_for_market(market)  # each market is its own account
         return len(square_off_positions(owner.broker, DhanApiClient(), NSE if market == "NSE" else MCX,
                                         owner.lock, owner.add_pnl, reason=FORCED_REASON))
 

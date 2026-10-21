@@ -17,7 +17,7 @@ from quant_intelligence.brokers.dhan_api_client import DhanApiClient
 from quant_intelligence.brokers.dhan_rate_limit import LIMITER
 from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.data.data_keeper import DATA_KEEPER
-from quant_intelligence.execution.engine import COMMODITY_RUNNER, ENGINE
+from quant_intelligence.execution.engine import COMMODITY_RUNNER, ENGINE, MCX_ENGINE, engine_for, engine_for_market
 from quant_intelligence.risk.risk_engine import AccountState
 
 # A not-OK pipeline result is recomputed after this long (the data feed may have recovered meanwhile).
@@ -84,9 +84,10 @@ def init_session_state() -> None:
         st.session_state["pipeline_output"] = None
     if "pipeline_error" not in st.session_state:
         st.session_state["pipeline_error"] = None
-    # The paper account, risk counters and kill switch are process-wide (ENGINE), not per
+    # Each market's paper account, risk counters and kill switch are process-wide (ENGINE for NSE, MCX_ENGINE for MCX), not per
     # browser session, so the background auto-trader and every page see the same account.
     ENGINE.restore_from_db()  # no-op after the first call in this process
+    MCX_ENGINE.restore_from_db()
     st.session_state["paper_broker"] = ENGINE.broker
     if "dhan_api_client" not in st.session_state:
         st.session_state["dhan_api_client"] = DhanApiClient()
@@ -128,8 +129,14 @@ def render_engine_sidebar() -> None:
                 st.rerun()
 
 
-def get_account_state() -> AccountState:
-    return ENGINE.account_state()
+def get_account_state(market: str = "NSE") -> AccountState:
+    """The paper account of a market ("NSE" or "MCX")."""
+    return engine_for_market(market).account_state()
+
+
+def account_state_for(instrument: str | None) -> AccountState:
+    """The paper account an instrument trades in: commodity underlyings use MCX, everything else NSE."""
+    return engine_for(instrument).account_state()
 
 
 _live_peak_equity = 0.0  # the live account's own high-water mark; never mixed with the paper engine's

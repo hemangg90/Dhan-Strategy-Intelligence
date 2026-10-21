@@ -34,3 +34,9 @@ def capital_summary(broker) -> dict:
         "sell_premium_value": sell_premium,
         "open_positions": len(open_positions),
     }
+
+
+def combined_capital_summary(*brokers) -> dict:
+    """The capital summaries of several separate accounts added together (NSE + MCX), for a combined view."""
+    parts = [capital_summary(b) for b in brokers]
+    return {key: sum(p[key] for p in parts) for key in parts[0]}

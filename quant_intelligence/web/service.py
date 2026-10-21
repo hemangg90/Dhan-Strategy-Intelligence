@@ -155,7 +155,7 @@ def backtest_detail(run_id: str) -> dict | None:
 
 
 def risk_overview(limit: int = 15) -> dict:
-    limits = SETTINGS.risk
+    limits = SETTINGS.risk  # the NSE limit set; MCX has its own, shown in the app
     checks = [
         ("Order parameters", "Entry, stop and target positive; stop and target on the correct side; whole-lot quantity"),
         ("Data freshness", f"Price no older than {MAX_QUOTE_AGE_SEC // 60} minutes at order time, and data quality OK"),

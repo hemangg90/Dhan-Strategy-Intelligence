@@ -99,10 +99,11 @@ def max_loss_per_lot(premium_setup: PremiumSetup) -> float:
     return abs(premium_setup.entry_price - premium_setup.stop_price) * premium_setup.contract.lot_size
 
 
-def max_lots_within_risk_budget(premium_setup: PremiumSetup, equity: float) -> int:
-    """How many lots keep total premium-at-risk within SETTINGS.risk.max_risk_per_trade_pct."""
+def max_lots_within_risk_budget(premium_setup: PremiumSetup, equity: float, market: str = "NSE") -> int:
+    """How many lots keep total premium-at-risk within the market's max_risk_per_trade_pct."""
     per_lot_risk = max_loss_per_lot(premium_setup)
     if per_lot_risk <= 0 or equity <= 0:
         return 0
-    budget = equity * SETTINGS.risk.max_risk_per_trade_pct / 100.0
+    limits = SETTINGS.risk_mcx if market.upper() == "MCX" else SETTINGS.risk
+    budget = equity * limits.max_risk_per_trade_pct / 100.0
     return int(budget // per_lot_risk)

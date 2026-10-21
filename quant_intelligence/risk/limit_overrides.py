@@ -1,6 +1,6 @@
-"""Editable risk limits: validated, bounded, persisted and audited.
+"""Editable risk limits: validated, bounded, persisted and audited. NSE and MCX each have their own set.
 
-The limits live in the frozen `SETTINGS.risk` (read from the environment at import). Every read site looks at
+The limits live in the frozen `SETTINGS.risk` (NSE) and `SETTINGS.risk_mcx` (MCX) (read from the environment at import). Every read site looks at
 `SETTINGS.risk` on each call, so changing a field in place takes effect on the next evaluation - the same way
 `config/credentials.py` applies a new token. Rules:
 
@@ -10,6 +10,7 @@ The limits live in the frozen `SETTINGS.risk` (read from the environment at impo
 * A change is stored (table `risk_limit_overrides`) and audited (a `LIMIT_CHANGE` risk event) in ONE transaction. If
   that fails, nothing is applied (fail closed).
 * Saved values are reloaded at start by `load_persisted()` (never at import, so tests keep their own environment).
+  An NSE row is stored under the plain field name and an MCX row as `MCX:<field>`.
 * Already-open positions and already-issued approvals are not re-judged; new values apply to new evaluations.
 """
 from __future__ import annotations
@@ -60,12 +61,27 @@ EDITABLE: tuple[Spec, ...] = (
 )
 BY_FIELD = {s.field: s for s in EDITABLE}
 
-# What the environment/defaults gave at start: the target of "reset to defaults".
-BASELINE: dict[str, float] = {s.field: getattr(SETTINGS.risk, s.field) for s in EDITABLE}
+MARKETS = ("NSE", "MCX")
 
 
-def current() -> dict[str, float]:
-    return {s.field: getattr(SETTINGS.risk, s.field) for s in EDITABLE}
+def _limits(market: str):
+    """The limit set of a market (the live object every read site uses)."""
+    return SETTINGS.risk_mcx if market.upper() == "MCX" else SETTINGS.risk
+
+
+# What the environment/defaults gave at start, per market: the target of "reset to defaults".
+BASELINES: dict[str, dict[str, float]] = {m: {s.field: getattr(_limits(m), s.field) for s in EDITABLE} for m in MARKETS}
+BASELINE: dict[str, float] = BASELINES["NSE"]  # the NSE set, kept under its original name
+
+
+def _key(market: str, field: str) -> str:
+    """Storage key: NSE keeps the plain field name (rows saved before the split), MCX is prefixed."""
+    return f"MCX:{field}" if market.upper() == "MCX" else field
+
+
+def current(market: str = "NSE") -> dict[str, float]:
+    limits = _limits(market)
+    return {s.field: getattr(limits, s.field) for s in EDITABLE}
 
 
 def _number(spec: Spec, raw) -> tuple[float | int | None, str | None]:
@@ -89,7 +105,7 @@ def _number(spec: Spec, raw) -> tuple[float | int | None, str | None]:
     return value, None
 
 
-def validate(changes: dict) -> tuple[dict, list[str]]:
+def validate(changes: dict, market: str = "NSE") -> tuple[dict, list[str]]:
     """Clean values for the fields in `changes`, plus the problems found. Nothing is applied here."""
     clean: dict = {}
     errors: list[str] = []
@@ -103,7 +119,7 @@ def validate(changes: dict) -> tuple[dict, list[str]]:
             errors.append(problem)
         else:
             clean[field] = value
-    merged = {**current(), **clean}
+    merged = {**current(market), **clean}
     if merged["max_portfolio_exposure_pct"] < merged["max_strategy_exposure_pct"]:
         errors.append("Portfolio exposure must be at least the strategy exposure")
     return clean, errors
@@ -131,20 +147,24 @@ class Result:
     errors: list[str]
 
 
-def _store(rows: dict, decision_id: str, reason: str, details: dict, clear: bool) -> None:
-    """Upsert the override rows and write the audit event in one transaction."""
+def _store(rows: dict, decision_id: str, reason: str, details: dict, clear: bool, market: str = "NSE") -> None:
+    """Upsert the market's override rows and write the audit event in one transaction."""
     from quant_intelligence.database.db import get_session, init_db
     from quant_intelligence.database.models import RiskEvent, RiskLimitOverride, utcnow
 
     init_db()
     with get_session() as session:
         if clear:
-            session.query(RiskLimitOverride).delete()
+            mcx = market.upper() == "MCX"
+            for row in session.query(RiskLimitOverride).all():
+                if row.field.startswith("MCX:") == mcx:
+                    session.delete(row)
         else:
             for field, value in rows.items():
-                row = session.get(RiskLimitOverride, field)
+                key = _key(market, field)
+                row = session.get(RiskLimitOverride, key)
                 if row is None:
-                    session.add(RiskLimitOverride(field=field, value=float(value), reason=reason))
+                    session.add(RiskLimitOverride(field=key, value=float(value), reason=reason))
                 else:
                     row.value, row.reason = float(value), reason
                     row.updated_at = utcnow()
@@ -152,14 +172,18 @@ def _store(rows: dict, decision_id: str, reason: str, details: dict, clear: bool
 
 
 def apply(changes: dict, *, reason: str = "", confirm_loosen: bool = False, kill_switch: bool = False,
-          _clear: bool = False) -> Result:
-    """Validate, persist, audit, then apply `changes`. Returns what was applied, or why nothing was."""
+          market: str = "NSE", _clear: bool = False) -> Result:
+    """Validate, persist, audit, then apply `changes` to one market's limits. Returns what was applied, or why nothing was.
+    `kill_switch` is that market's kill switch."""
+    market = market.upper()
+    if market not in MARKETS:
+        return Result(False, {}, [f"Unknown market {market}"])
     if SETTINGS.demo_lockdown:
         return Result(False, {}, ["Risk limits cannot be changed under demo lockdown"])
-    clean, errors = validate(changes)
+    clean, errors = validate(changes, market)
     if errors:
         return Result(False, {}, errors)
-    now = current()
+    now = current(market)
     diff = {f: v for f, v in clean.items() if v != now[f]}
     moves = {f: {"old": now[f], "new": v, "direction": direction(f, now[f], v)} for f, v in diff.items()}
     reason = (reason or "").strip()
@@ -174,26 +198,30 @@ def apply(changes: dict, *, reason: str = "", confirm_loosen: bool = False, kill
         return Result(True, {}, [])
     decision_id = f"LIMIT-{uuid.uuid4().hex[:12]}"
     summary = ", ".join(f"{f} {m['old']:g} -> {m['new']:g} ({m['direction']})" for f, m in moves.items()) or "reset to defaults"
-    details = {"changes": moves, "reason": reason, "reset": _clear}
+    details = {"market": market, "changes": moves, "reason": reason, "reset": _clear}
     try:
-        _store(diff if not _clear else {}, decision_id, reason or summary, details, _clear)
+        _store(diff if not _clear else {}, decision_id, reason or summary, details, _clear, market)
     except Exception as exc:  # fail closed: an unrecorded change is not made
         log_event("risk_engine", f"Risk limit change NOT applied (could not be recorded): {type(exc).__name__}", level="ERROR")
         return Result(False, {}, [f"The change could not be recorded, so it was not applied ({type(exc).__name__})"])
+    limits = _limits(market)
     for field, value in diff.items():
-        object.__setattr__(SETTINGS.risk, field, value)
-    log_event("risk_engine", f"Risk limits changed: {summary}", level="WARNING" if any(
+        object.__setattr__(limits, field, value)
+    log_event("risk_engine", f"{market} risk limits changed: {summary}", level="WARNING" if any(
         m["direction"] == LOOSER for m in moves.values()) else "INFO", decision_id=decision_id, reason=reason)
     return Result(True, moves, [])
 
 
-def reset_to_defaults(*, reason: str = "", confirm_loosen: bool = False, kill_switch: bool = False) -> Result:
-    """Back to the environment/default values and forget the saved overrides. Loosening rules still apply."""
-    return apply(dict(BASELINE), reason=reason, confirm_loosen=confirm_loosen, kill_switch=kill_switch, _clear=True)
+def reset_to_defaults(*, reason: str = "", confirm_loosen: bool = False, kill_switch: bool = False,
+                      market: str = "NSE") -> Result:
+    """Back to the market's environment/default values and forget its saved overrides. Loosening rules still apply."""
+    return apply(dict(BASELINES.get(market.upper(), BASELINE)), reason=reason, confirm_loosen=confirm_loosen,
+                 kill_switch=kill_switch, market=market, _clear=True)
 
 
 def load_persisted() -> dict:
-    """Apply the saved overrides at start. Invalid or out-of-range rows are skipped and logged. Returns what was applied."""
+    """Apply the saved overrides of every market at start. Invalid or out-of-range rows are skipped and logged.
+    Returns what was applied (NSE fields by name, MCX fields as `MCX:<field>`)."""
     try:
         from quant_intelligence.database.db import get_session
         from quant_intelligence.database.models import RiskLimitOverride
@@ -204,42 +232,46 @@ def load_persisted() -> dict:
         log_event("risk_engine", f"Saved risk limits could not be read: {type(exc).__name__}", level="WARNING")
         return {}
     applied: dict = {}
-    for field, raw in saved.items():
-        clean, errors = validate({field: raw})
+    for key, raw in saved.items():
+        market, field = ("MCX", key[4:]) if key.startswith("MCX:") else ("NSE", key)
+        clean, errors = validate({field: raw}, market)
         if errors or field not in clean:
-            log_event("risk_engine", f"Saved risk limit ignored: {'; '.join(errors) or field}", level="WARNING")
+            log_event("risk_engine", f"Saved risk limit ignored: {'; '.join(errors) or key}", level="WARNING")
             continue
-        merged = {**current(), **clean}
+        merged = {**current(market), **clean}
         if merged["max_portfolio_exposure_pct"] < merged["max_strategy_exposure_pct"]:
-            log_event("risk_engine", f"Saved risk limit {field} ignored: portfolio exposure below strategy exposure", level="WARNING")
+            log_event("risk_engine", f"Saved risk limit {key} ignored: portfolio exposure below strategy exposure", level="WARNING")
             continue
-        object.__setattr__(SETTINGS.risk, field, clean[field])
-        applied[field] = clean[field]
+        object.__setattr__(_limits(market), field, clean[field])
+        applied[key] = clean[field]
     if applied:
         log_event("risk_engine", f"Loaded saved risk limits: {applied}", level="INFO")
     return applied
 
 
-def rows() -> list[dict]:
-    """One row per editable limit, for the UI."""
-    now = current()
+def rows(market: str = "NSE") -> list[dict]:
+    """One row per editable limit of a market, for the UI."""
+    now = current(market)
+    base = BASELINES.get(market.upper(), BASELINE)
     return [
         {"field": s.field, "label": s.label, "unit": s.unit, "help": s.help, "kind": s.kind, "lo": s.lo, "hi": s.hi,
-         "off_allowed": s.off_allowed, "current": now[s.field], "default": BASELINE[s.field],
-         "changed": now[s.field] != BASELINE[s.field]}
+         "off_allowed": s.off_allowed, "current": now[s.field], "default": base[s.field],
+         "changed": now[s.field] != base[s.field]}
         for s in EDITABLE
     ]
 
 
-def recent_changes(limit: int = 30) -> list[dict]:
+def recent_changes(limit: int = 30, market: str = "NSE") -> list[dict]:
     from quant_intelligence.database.db import get_session
     from quant_intelligence.database.models import RiskEvent
 
     with get_session() as session:
         events = (session.query(RiskEvent).filter(RiskEvent.event_type == "LIMIT_CHANGE")
-                  .order_by(RiskEvent.id.desc()).limit(limit).all())
+                  .order_by(RiskEvent.id.desc()).limit(limit * 3).all())
     out = []
     for e in events:
+        if ((e.details or {}).get("market") or "NSE").upper() != market.upper():
+            continue  # events saved before the split carry no market and belong to NSE
         moves = (e.details or {}).get("changes", {})
         out.append({
             "When (UTC)": e.timestamp,
@@ -247,4 +279,4 @@ def recent_changes(limit: int = 30) -> list[dict]:
                                 for f, m in moves.items()) or "reset to defaults",
             "Reason": (e.details or {}).get("reason") or e.reason,
         })
-    return out
+    return out[:limit]

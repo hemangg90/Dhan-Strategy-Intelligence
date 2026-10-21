@@ -224,8 +224,9 @@ def test_nse_and_commodity_runners_run_concurrently_and_independently(monkeypatc
     _fake_cycle(monkeypatch, calls, delay=0.3)  # a slow scan must not block the other runner
     monkeypatch.setattr(engine_module, "is_market_open", lambda **kw: True)
     nse = engine_module.TradingEngine()
-    mcx = engine_module.ScanRunner("commodities", MCX, owner=nse)
-    assert mcx.owner is nse and mcx.owner.broker is nse.broker  # one shared cash pool
+    mcx = engine_module.TradingEngine("commodities", MCX)
+    assert mcx.owner is mcx and mcx.broker is not nse.broker  # separate paper accounts
+    assert mcx.lock is not nse.lock and mcx.profile is MCX
 
     nse.start([], ["TCS"], "5min", 30, interval_seconds=0.05, market_hours_only=False)
     mcx.start([], ["CRUDEOIL"], "5min", 30, interval_seconds=0.05, market_hours_only=False)
@@ -245,14 +246,14 @@ def test_nse_and_commodity_runners_run_concurrently_and_independently(monkeypatc
         mcx.stop()
 
 
-def test_kill_switch_is_shared_and_gate_uses_each_runners_own_session(monkeypatch):
+def test_kill_switch_is_per_market_and_gate_uses_each_runners_own_session(monkeypatch):
     calls = []
     _fake_cycle(monkeypatch, calls)
     seen_profiles = []
     monkeypatch.setattr(engine_module, "is_market_open", lambda profile=NSE, **kw: seen_profiles.append(profile) or profile is MCX)
     monkeypatch.setattr(engine_module, "in_close_window", lambda *a: False)
     nse = engine_module.TradingEngine()
-    mcx = engine_module.ScanRunner("commodities", MCX, owner=nse)
+    mcx = engine_module.TradingEngine("commodities", MCX)
 
     nse.start([], ["TCS"], "5min", 30, interval_seconds=0.05)
     mcx.start([], ["CRUDEOIL"], "5min", 30, interval_seconds=0.05)
@@ -263,7 +264,13 @@ def test_kill_switch_is_shared_and_gate_uses_each_runners_own_session(monkeypatc
         assert mcx.cycles >= 1 and nse.cycles == 0  # NSE closed, MCX open
         assert "waiting for 09:15" in nse.last_status
 
-        nse.kill_switch = True  # engaged on the owner, halts the commodity runner too
+        nse.kill_switch = True  # the NSE kill switch is NSE's own: the MCX runner keeps scanning
+        time.sleep(0.4)
+        done = mcx.cycles
+        time.sleep(0.4)
+        assert mcx.cycles > done
+
+        mcx.kill_switch = True  # the MCX switch halts MCX
         time.sleep(0.4)
         done = mcx.cycles
         time.sleep(0.4)

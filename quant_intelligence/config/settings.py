@@ -170,7 +170,9 @@ class Settings:
     default_instrument: str = os.getenv("DEFAULT_INSTRUMENT", "NIFTY")
     default_timeframe: str = os.getenv("DEFAULT_TIMEFRAME", "5min")
 
-    paper_starting_capital: float = _float_env("PAPER_STARTING_CAPITAL", 1_000_000.0)
+    paper_starting_capital: float = _float_env("PAPER_STARTING_CAPITAL", 1_000_000.0)  # the NSE paper account
+    # The MCX paper account is separate from NSE's. Defaults to the same size.
+    paper_starting_capital_mcx: float = _float_env("PAPER_STARTING_CAPITAL_MCX", _float_env("PAPER_STARTING_CAPITAL", 1_000_000.0))
 
     # Tie-break: when the best two strategies are statistically tied but the top one is eligible, trade it
     # anyway - tagged "TIE-BREAK" and sized down - instead of standing aside. Live trading stays manual
@@ -247,7 +249,9 @@ class Settings:
     heatmap_refresh_minutes: int = _int_env("HEATMAP_REFRESH_MINUTES", 15)
     heatmap_universe_top_n: int = _int_env("HEATMAP_UNIVERSE_TOP_N", 200)
 
-    risk: RiskLimits = field(default_factory=RiskLimits)
+    risk: RiskLimits = field(default_factory=RiskLimits)  # NSE limits
+    # MCX has its own limit set (separate instance, same starting values). Edited on the MCX Risk Control page.
+    risk_mcx: RiskLimits = field(default_factory=RiskLimits)
     costs: CostAssumptions = field(default_factory=CostAssumptions)
     dhan: DhanLimits = field(default_factory=DhanLimits)
 

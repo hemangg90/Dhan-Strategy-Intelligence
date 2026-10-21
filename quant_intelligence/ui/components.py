@@ -120,8 +120,9 @@ def status_bar_html() -> str:
         '<span class="qi-sep"></span>',
         chip(f"{mode} mode", "critical" if mode == "LIVE" else "info"),
     ]
-    if ENGINE.kill_switch:
-        parts.append(chip("KILL SWITCH ON", "critical"))
+    for label, engine in (("NSE", ENGINE), ("MCX", COMMODITY_RUNNER)):
+        if engine.kill_switch:
+            parts.append(chip(f"{label} KILL SWITCH ON", "critical"))
     return f'<div class="qi-statusbar">{"".join(parts)}</div>'
 
 

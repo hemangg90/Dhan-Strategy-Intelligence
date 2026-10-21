@@ -2,8 +2,8 @@
 
 Used for the NSE index+stock watchlist (`ENGINE`) and for MCX commodities (`COMMODITY_RUNNER`).
 Auto trading runs in a background thread owned by the runner (execution/engine.py), so it keeps running
-when you switch pages or close the tab, until you press Stop. Both runners share one paper broker, so
-capital and open positions are common to both.
+when you switch pages or close the tab, until you press Stop. NSE and MCX are separate paper accounts, each
+with its own capital, risk limits, drawdown and kill switch.
 
 Layout: control bar -> live account/market tiles -> market watch (price, change, day range, sparkline,
 scan result per instrument) -> tabs for positions, scan results, activity feed and today's performance.
@@ -100,19 +100,20 @@ def _live_header(runner: ScanRunner, market: str, symbols: list[str]) -> None:
          "help": f"Closed {market} trades today after charges + open {market} positions marked to live prices"},
         {"label": f"Open {market} positions", "value": str(len(mine)),
          "delta": f"{F.inr(float(mine['invested'].sum()) if len(mine) else 0)} invested"},
-        {"label": "Capital used (all)", "value": F.inr(cap["capital_used"]),
+        {"label": f"{market} capital used", "value": F.inr(cap["capital_used"]),
          "delta": f"{cap['capital_used'] / cap['account_value'] * 100:.1f}% of account" if cap["account_value"] else None},
-        {"label": "Available", "value": F.inr(cap["available"]), "help": "Shared by the NSE and MCX auto-traders"},
+        {"label": "Available", "value": F.inr(cap["available"]), "help": f"Available in the {market} paper account (NSE and MCX are separate accounts)"},
         {"label": "Needed by signals", "value": F.inr(required_now),
          "help": "Premium x quantity for setups that triggered in the last scan"},
     ])
     try:
         from quant_intelligence.execution.auto_trader import risk_budget
+        from quant_intelligence.risk.risk_engine import limits_for
 
         budget, mult, why = risk_budget(runner.owner.account_state())
         st.caption(
-            f"Loss limit: a stopped {market} trade risks at most {F.inr(budget)} ({SETTINGS.risk.max_risk_per_trade_pct:g}% of equity, "
-            f"whole lots; same limit as every market" + (f"; cut to {mult:.0%} now - {why}" if mult < 1 else "")
+            f"Loss limit: a stopped {market} trade risks at most {F.inr(budget)} ({limits_for(market).max_risk_per_trade_pct:g}% of equity, "
+            f"whole lots; the {market} limit, set on its Risk Control page" + (f"; cut to {mult:.0%} now - {why}" if mult < 1 else "")
             + "). An instrument whose single lot would lose more than that at its stop is skipped (see 'NO SIZE' in the scan detail)."
         )
     except Exception:

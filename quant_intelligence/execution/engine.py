@@ -1,13 +1,13 @@
 """Process-wide paper-trading engine.
 
-Owns the shared PaperBroker, the daily risk counters and the kill switch, and runs the
-auto-trading scan in a background thread. Because it lives at module level (not in a
+Each market (NSE, MCX) has its own TradingEngine: its own PaperBroker (cash), daily risk counters, drawdown
+peak, kill switch and risk limits, and runs the auto-trading scan in a background thread. Because it lives at module level (not in a
 Streamlit session or page), switching pages - or closing the browser tab - does not stop it;
 only `stop()` (or the server restarting / the cloud app sleeping) does.
 
-A second runner (`COMMODITY_RUNNER`) scans MCX commodities on its own thread and session
-hours while borrowing the NSE engine's broker, counters and kill switch, so both draw on one
-shared cash pool.
+`ENGINE` is the NSE account. `MCX_ENGINE` (also exported as `COMMODITY_RUNNER`) is the separate MCX account: it scans
+commodities on its own thread and session hours and shares nothing with NSE. A trade is always checked and sized against
+the account and limits of its own market.
 
 Streamlit-free on purpose: a background thread has no ScriptRunContext, so nothing here
 may call `st.*`.
@@ -26,19 +26,16 @@ from quant_intelligence.execution.multi_cycle import run_multi_instrument_cycle
 from quant_intelligence.execution.square_off import in_close_window, square_off_positions
 from quant_intelligence.risk.risk_engine import AccountState
 from quant_intelligence.utils.logging_utils import log_event
-from quant_intelligence.utils.market_profile import MCX, NSE, MarketProfile
+from quant_intelligence.utils.market_profile import MCX, NSE, MarketProfile, profile_for
 from quant_intelligence.utils.timeutil import is_market_open, now_ist, today_ist
 
 
 class ScanRunner:
     """A background scan loop over one watchlist in one market session.
 
-    Several runners can run at once (NSE indices+stocks, MCX commodities). They share one
-    `owner` TradingEngine - and therefore one broker, one cash pool, one set of daily risk
-    counters and one kill switch - but each has its own thread, stop event, session profile
-    and status. A runner holds only its own `scan_lock` for the whole scan; the owner's short
-    `lock` is taken just around broker mutations (see multi_cycle), so a long NSE scan never
-    blocks the commodity runner.
+    The NSE and MCX runners run at once, each a TradingEngine that owns its broker, cash, daily risk counters and kill
+    switch. A runner holds only its own `scan_lock` for the whole scan; the owner's short `lock` is taken just around
+    broker mutations (see multi_cycle), so a long NSE scan never blocks the commodity runner.
     """
 
     def __init__(self, name: str, profile: MarketProfile, owner: "TradingEngine | None" = None) -> None:
@@ -205,17 +202,18 @@ class ScanRunner:
 
 
 class TradingEngine(ScanRunner):
-    """The NSE runner, which also owns the shared broker, risk counters and kill switch."""
+    """One market's runner, which also owns that market's broker, risk counters and kill switch."""
 
-    def __init__(self) -> None:
-        super().__init__("nse", NSE)
-        self.broker = PaperBroker()
+    def __init__(self, name: str = "nse", profile: MarketProfile = NSE) -> None:
+        super().__init__(name, profile)
+        capital = SETTINGS.paper_starting_capital_mcx if profile.name == "MCX" else SETTINGS.paper_starting_capital
+        self.broker = PaperBroker(starting_capital=capital)
         self.lock = threading.RLock()
         self.kill_switch = False
         self.trades_today = 0
         self.daily_pnl = 0.0  # realised today
         self.day_peak_pnl = 0.0  # highest marked-to-market daily P&L today (profit giveback lock)
-        self.peak_equity = SETTINGS.paper_starting_capital  # carried across days (drawdown is multi-day)
+        self.peak_equity = capital  # carried across days (drawdown is multi-day)
         self._day = today_ist()
         self._restored = False
 
@@ -242,20 +240,24 @@ class TradingEngine(ScanRunner):
                 init_db()  # a page can be the first thing loaded; make sure new columns exist
                 from quant_intelligence.risk.limit_overrides import load_persisted
 
-                load_persisted()  # limits changed from the Risk Control page survive a restart
+                load_persisted()  # limits changed from the Risk Control pages survive a restart (every market)
                 day_start = dt.datetime.combine(today_ist(), dt.time.min)
                 cols = [c.name for c in Position.__table__.columns if c.name != "id"]
                 with get_session() as session:
-                    stale = session.query(Position).filter(
-                        Position.status == "OPEN",
-                        (Position.opened_at < day_start) | (Position.opened_at.is_(None)),
-                    ).all()
+                    stale = [
+                        r for r in session.query(Position).filter(
+                            Position.status == "OPEN",
+                            (Position.opened_at < day_start) | (Position.opened_at.is_(None)),
+                        ).all()
+                        if self._mine(r.underlying or r.instrument)
+                    ]
                     for row in stale:
                         row.status = "STALE"
                         row.exit_reason = "STALE_ON_RESTART"
                     today_rows = [
                         {c: getattr(r, c) for c in cols}
                         for r in session.query(Position).filter(Position.opened_at >= day_start).all()
+                        if self._mine(r.underlying or r.instrument)
                     ]
                     closed_history = [
                         (r.closed_at, r.net_pnl)
@@ -263,6 +265,7 @@ class TradingEngine(ScanRunner):
                         .filter(Position.status == "CLOSED", Position.net_pnl.isnot(None))
                         .order_by(Position.closed_at)
                         .all()
+                        if self._mine(r.underlying or r.instrument)
                     ]
                 realised_today = 0.0
                 for d in today_rows:
@@ -271,7 +274,8 @@ class TradingEngine(ScanRunner):
                         realised_today += d["net_pnl"]
                 self.trades_today = len(today_rows)
                 self.daily_pnl = realised_today
-                self.broker.cash, self.peak_equity = _equity_and_peak(self.broker.capital, closed_history, _load_peak_reset())
+                self.broker.cash, self.peak_equity = _equity_and_peak(
+                    self.broker.capital, closed_history, _load_peak_reset(self.profile.name))
                 log_event(
                     "engine",
                     f"Restored {sum(1 for d in today_rows if d['status'] == 'OPEN')} open position(s) and "
@@ -281,7 +285,11 @@ class TradingEngine(ScanRunner):
             except Exception as e:  # never block startup on recovery
                 log_event("engine", f"Could not restore paper book from the database: {e}", level="ERROR")
 
-    # ---- shared risk counters ------------------------------------------------
+    def _mine(self, symbol: str | None) -> bool:
+        """Whether an instrument belongs to this engine's market."""
+        return profile_for(symbol).name == self.profile.name
+
+    # ---- this market's risk counters -----------------------------------------
     def _roll_day(self) -> None:
         today = today_ist()
         if today != self._day:
@@ -297,8 +305,8 @@ class TradingEngine(ScanRunner):
         with self.lock:
             equity = self.broker.cash + _unrealised(self.broker.get_open_positions())
             self.peak_equity = equity
-            _save_peak_reset(now_ist(), equity)
-            log_event("engine", f"Drawdown peak reset to {equity:,.0f}", level="WARNING")
+            _save_peak_reset(now_ist(), equity, self.profile.name)
+            log_event("engine", f"{self.profile.name} drawdown peak reset to {equity:,.0f}", level="WARNING")
             return equity
 
     def add_trade(self, n: int = 1) -> None:
@@ -354,6 +362,7 @@ class TradingEngine(ScanRunner):
                 open_positions=open_summary,
                 closed_today=closed_today,
                 day_peak_pnl=self.day_peak_pnl,
+                market=self.profile.name,
             )
 
 
@@ -387,20 +396,38 @@ def _equity_and_peak(capital: float, closed_history: list, peak_reset: dict | No
     return equity, max(peak, equity)
 
 
-def _load_peak_reset() -> dict | None:
+def _peak_reset_file(market: str = "NSE"):
+    """One file per market. NSE keeps the original name, so a reset made before the split still applies to NSE."""
+    if market.upper() == "MCX":
+        return _PEAK_RESET_FILE.with_name(f"{_PEAK_RESET_FILE.stem}_mcx{_PEAK_RESET_FILE.suffix}")
+    return _PEAK_RESET_FILE
+
+
+def _load_peak_reset(market: str = "NSE") -> dict | None:
     try:
-        data = json.loads(_PEAK_RESET_FILE.read_text(encoding="utf-8"))
+        data = json.loads(_peak_reset_file(market).read_text(encoding="utf-8"))
         return {"at": dt.datetime.fromisoformat(data["at"]), "equity": float(data["equity"])}
     except Exception:
         return None
 
 
-def _save_peak_reset(at: dt.datetime, equity: float) -> None:
+def _save_peak_reset(at: dt.datetime, equity: float, market: str = "NSE") -> None:
     try:
-        _PEAK_RESET_FILE.write_text(json.dumps({"at": at.isoformat(), "equity": equity}), encoding="utf-8")
+        _peak_reset_file(market).write_text(json.dumps({"at": at.isoformat(), "equity": equity}), encoding="utf-8")
     except Exception as e:
         log_event("engine", f"Could not save the drawdown peak reset: {e}", level="WARNING")
 
 
-ENGINE = TradingEngine()
-COMMODITY_RUNNER = ScanRunner("commodities", MCX, owner=ENGINE)
+ENGINE = TradingEngine("nse", NSE)  # the NSE paper account
+MCX_ENGINE = TradingEngine("commodities", MCX)  # the separate MCX paper account
+COMMODITY_RUNNER = MCX_ENGINE  # kept for the pages and tests that use this name
+
+
+def engine_for_market(market: str | None) -> TradingEngine:
+    """The engine (account) of a market name: "MCX" -> MCX_ENGINE, anything else -> ENGINE."""
+    return MCX_ENGINE if (market or "").upper() == "MCX" else ENGINE
+
+
+def engine_for(symbol: str | None) -> TradingEngine:
+    """The engine whose account an instrument trades in (commodity underlyings -> MCX, everything else -> NSE)."""
+    return engine_for_market(profile_for(symbol).name)

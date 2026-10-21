@@ -125,7 +125,14 @@ def test_restore_rebuilds_todays_book_and_marks_older_open_rows_stale():
             _row("OLD-CLOSED", yesterday, "CLOSED", net_pnl=9999.0, closed_at=yesterday),
         ])
 
-    eng = engine_module.TradingEngine()
+    # CRUDEOIL is an MCX instrument: the NSE account must not pick up its book (the accounts are separate).
+    nse = engine_module.TradingEngine()
+    nse.restore_from_db()
+    assert not nse.broker.get_open_positions() and nse.trades_today == 0 and nse.broker.cash == nse.broker.capital
+    with get_session() as s:
+        assert s.query(Position).filter_by(position_id="OLD-OPEN").one().status == "OPEN"  # not NSE's to mark stale
+
+    eng = engine_module.TradingEngine("commodities", engine_module.MCX)
     eng.restore_from_db()
 
     open_ids = {p["position_id"] for p in eng.broker.get_open_positions()}

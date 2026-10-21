@@ -1,10 +1,10 @@
 """Commodity Auto Trading (MCX).
 
-Crude oil, natural gas, gold, silver and copper are pipelined, ranked and automated together,
+Crude oil, crude oil mini and natural gas are pipelined, ranked and automated together,
 and every trade is an option on the front-month future. Runs on its own background runner with
 its own start/stop and MCX session hours (09:00-23:55 IST), independently of - and at the same
-time as - the NSE runner on the Auto Multi-Instrument page. Both share ONE PaperBroker, so
-capital, open positions and the kill switch are common.
+time as - the NSE runner on the Auto Multi-Instrument page. MCX has its OWN paper account, risk
+limits, drawdown and kill switch (see Risk Control: MCX); nothing is shared with NSE.
 """
 import sys
 from pathlib import Path
@@ -23,8 +23,8 @@ apply_theme()
 init_session_state()
 page_header(
     "Commodity Auto Trading (MCX)",
-    "Crude oil, natural gas, gold, silver and copper - every trade is an option on the front-month future. Runs "
-    "independently of the NSE auto-trader and shares its paper capital.",
+    "Crude oil, crude oil mini and natural gas - every trade is an option on the front-month future. Runs "
+    "independently of the NSE auto-trader, with its own paper account and risk limits.",
 )
 with st.expander("Lot sizes - please verify", expanded=False):
     st.warning(

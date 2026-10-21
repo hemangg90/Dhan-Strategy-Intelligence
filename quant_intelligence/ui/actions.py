@@ -7,7 +7,7 @@ price: with no live quote the position stays open and the user is told why.
 from __future__ import annotations
 
 from quant_intelligence.brokers.dhan_api_client import DhanApiClient
-from quant_intelligence.execution.engine import COMMODITY_RUNNER, ENGINE
+from quant_intelligence.execution.engine import ENGINE, MCX_ENGINE
 from quant_intelligence.execution.position_monitor import _fetch_quotes
 from quant_intelligence.execution.square_off import EOD_REASON  # noqa: F401  (re-exported for callers)
 
@@ -16,8 +16,11 @@ MANUAL_REASON = "MANUAL"
 
 def exit_position(position_id: str, reason: str = MANUAL_REASON) -> tuple[bool, str]:
     """Close one open paper position at its latest traded premium. Returns (closed, message)."""
-    broker = ENGINE.broker
-    with ENGINE.lock:
+    engine = next((e for e in (ENGINE, MCX_ENGINE) if position_id in e.broker.positions), None)
+    if engine is None:
+        return False, "That position is not open any more."
+    broker = engine.broker
+    with engine.lock:
         pos = broker.positions.get(position_id)
         if pos is None or pos["status"] != "OPEN":
             return False, "That position is not open any more."
@@ -34,16 +37,16 @@ def exit_position(position_id: str, reason: str = MANUAL_REASON) -> tuple[bool, 
     price = (quotes.get(str(snapshot["security_id"])) or {}).get("last_price")
     if price is None:
         return False, "No live price for this contract right now - the position is left open."
-    with ENGINE.lock:
+    with engine.lock:
         closed = broker.close_position(position_id, float(price), reason)
         if closed is None:
             return False, "That position was already closed."
-        ENGINE.add_pnl(closed["net_pnl"])
+        engine.add_pnl(closed["net_pnl"])
     return True, f"Closed at ₹{price:,.2f}  (P&L {closed['net_pnl']:+,.0f})"
 
 
 def square_off_all() -> list[dict]:
     """Close every open paper position in both markets at their latest prices."""
     closed = list(ENGINE.square_off_now())
-    closed += COMMODITY_RUNNER.square_off_now()
+    closed += MCX_ENGINE.square_off_now()
     return closed

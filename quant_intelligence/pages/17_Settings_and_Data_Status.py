@@ -21,7 +21,12 @@ st.subheader("Mode and switches")
 st.dataframe(pd.DataFrame(mode_rows()), hide_index=True, width="stretch")
 
 st.subheader("Risk limits")
-st.dataframe(pd.DataFrame(risk_rows()), hide_index=True, width="stretch")
+st.caption("NSE and MCX each have their own paper account and limits; change them on the Risk Control page of that market.")
+tab_nse, tab_mcx = st.tabs(["NSE", "MCX"])
+with tab_nse:
+    st.dataframe(pd.DataFrame(risk_rows("NSE")), hide_index=True, width="stretch")
+with tab_mcx:
+    st.dataframe(pd.DataFrame(risk_rows("MCX")), hide_index=True, width="stretch")
 
 st.subheader("Data status by instrument")
 scan = UNIVERSE.peek("5min")

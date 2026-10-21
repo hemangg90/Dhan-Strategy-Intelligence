@@ -3,7 +3,7 @@
 The index underlyings (SETTINGS.option_underlyings: NIFTY, BANKNIFTY, FINNIFTY, MIDCPNIFTY,
 SENSEX by default) and the fixed stock watchlist (config/watchlist.py) are pipelined, ranked and
 automated together in one pass, and EVERY trade is an option (index and stock options alike).
-All instruments share one combined result table and one PaperBroker/RiskEngine.
+All NSE instruments share one result table and the NSE paper account and risk limits (MCX has its own).
 """
 import sys
 from pathlib import Path

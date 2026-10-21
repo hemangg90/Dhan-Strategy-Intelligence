@@ -31,11 +31,11 @@ if output is None:
             + str(st.session_state.get("pipeline_error") or ""))
 else:
     from quant_intelligence.ui.candidate import build_candidate
-    from quant_intelligence.ui.state import get_account_state
+    from quant_intelligence.ui.state import account_state_for
 
     prov = output.provenance or {}
     st.markdown(f"**{output.instrument}**, data currency **{prov.get('mode', 'n/a')}**, last bar {output.timestamp:%d %b %H:%M}.")
-    walk = build_candidate(output, get_account_state())
+    walk = build_candidate(output, account_state_for(output.instrument))
     for stage in walk["stages"]:
         st.markdown(f"- **{stage['title']}** ({stage['state']}): {stage['headline']}")
     st.markdown(f"**Result: {walk['verdict']}.** {walk['reason']}")

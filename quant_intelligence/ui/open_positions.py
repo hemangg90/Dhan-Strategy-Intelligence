@@ -10,7 +10,7 @@ import streamlit as st
 
 from quant_intelligence.brokers.dhan_api_client import DhanApiClient
 from quant_intelligence.config.settings import SETTINGS
-from quant_intelligence.execution.engine import ENGINE
+from quant_intelligence.execution.engine import ENGINE, MCX_ENGINE
 from quant_intelligence.execution.position_monitor import fetch_option_ltp_map
 from quant_intelligence.ui import format as F
 from quant_intelligence.ui.actions import exit_position, square_off_all
@@ -20,17 +20,20 @@ from quant_intelligence.utils.timeutil import now_ist
 
 
 def live_open() -> tuple[pd.DataFrame, str | None]:
-    """Open paper positions priced with live premiums (from the shared cache). Returns (frame, error)."""
-    broker = ENGINE.broker
-    rows = broker.get_open_positions()
+    """Open paper positions of both markets priced with live premiums (from the shared cache). Returns (frame, error).
+    NSE and MCX are separate accounts, so the book is the two brokers' open positions together."""
+    rows: list[dict] = []
     ltp_map: dict = {}
     error = None
     client = DhanApiClient()
-    if rows and client.is_configured():
-        try:
-            ltp_map = fetch_open_ltp(broker, client)
-        except Exception as e:  # a failed quote fetch must not blank the page
-            error = str(e)
+    for engine in (ENGINE, MCX_ENGINE):
+        engine_rows = engine.broker.get_open_positions()
+        rows += engine_rows
+        if engine_rows and client.is_configured():
+            try:
+                ltp_map.update(fetch_open_ltp(engine.broker, client))
+            except Exception as e:  # a failed quote fetch must not blank the page
+                error = str(e)
     return with_live(positions_frame(rows, now=now_ist()), ltp_map), error
 
 

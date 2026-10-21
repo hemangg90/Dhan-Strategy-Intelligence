@@ -40,7 +40,8 @@ WORKSPACES = {
         _page("pages/10_Research_Reports.py", "Research Reports"),
     ],
     "Risk & Execution": [
-        _page("pages/09_Risk_Control.py", "Risk Control"),
+        _page("pages/09_Risk_Control.py", "Risk Control: NSE"),
+        _page("pages/09_Risk_Control_MCX.py", "Risk Control: MCX"),
         _page("pages/07_Paper_Trading.py", "Paper Trading"),
         _page("pages/13_Auto_Multi_Stock_Trading.py", "Auto Trading: Stocks"),
         _page("pages/14_Commodity_Auto_Trading.py", "Auto Trading: Commodities"),
