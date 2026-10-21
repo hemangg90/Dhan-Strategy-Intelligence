@@ -469,6 +469,15 @@ def test_the_auth_block_expires_on_its_own():
     assert lim.auth_block_remaining("t") == 0.0
 
 
+def test_the_snapshot_stops_reporting_a_block_once_the_token_is_replaced():
+    ft = FakeTime()
+    lim = RateLimiter(DhanLimits(), clock=ft.clock, sleep=ft.sleep)
+    lim.record_auth_failure("old")
+    assert lim.snapshot(token="old")["auth_block_remaining"] == pytest.approx(300.0)
+    assert lim.snapshot(token="new")["auth_block_remaining"] == 0.0  # the red banner must clear when a new token is saved
+    assert lim.snapshot()["auth_block_remaining"] == pytest.approx(300.0)  # no token given: unchanged behaviour
+
+
 # ---------------------------------------------------------------- "why is the data degraded?" must be answerable
 def test_a_failed_refresh_is_reported_as_the_reason_the_data_is_old(dm):
     manager, _, tmp = dm

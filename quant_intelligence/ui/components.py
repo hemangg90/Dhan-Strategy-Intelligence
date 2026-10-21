@@ -65,7 +65,7 @@ def _session_chip(label: str, profile) -> str:
 
 
 def dhan_chip() -> str:
-    snap = LIMITER.snapshot()
+    snap = LIMITER.snapshot(token=SETTINGS.dhan_access_token)
     if not (SETTINGS.dhan_client_id and SETTINGS.dhan_access_token):
         return chip("Dhan: not configured", "muted")
     ts = token_status(SETTINGS.dhan_access_token)

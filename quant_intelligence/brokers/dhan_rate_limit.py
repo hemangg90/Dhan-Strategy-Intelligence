@@ -142,7 +142,8 @@ class RateLimiter:
         return max(0.0, self._auth_failed_until - self.clock())
 
     # ---- observability -----------------------------------------------------------
-    def snapshot(self, window: float = 60.0) -> dict:
+    def snapshot(self, window: float = 60.0, token: str | None = None) -> dict:
+        """`token`: the access token in use now. When given, a 401 recorded for a different (replaced) token is not reported."""
         now = self.clock()
         with self._state_lock:
             per_category = {
@@ -157,7 +158,10 @@ class RateLimiter:
                 "categories": per_category,
                 "total_429": self._total_429,
                 "cooldown_remaining": max(0.0, self._cooldown_until - now),
-                "auth_block_remaining": max(0.0, self._auth_failed_until - now),
+                "auth_block_remaining": (
+                    0.0 if token is not None and token != self._auth_failed_token
+                    else max(0.0, self._auth_failed_until - now)
+                ),
                 "last_ok_age_sec": None if self._last_ok_wall is None else time.time() - self._last_ok_wall,
                 "window_sec": window,
             }

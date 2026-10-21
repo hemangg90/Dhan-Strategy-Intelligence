@@ -69,7 +69,7 @@ with st.expander(f"Recent warnings and errors ({len(_errors)})"):
 
 st.divider()
 st.subheader("Dhan API usage")
-snap = LIMITER.snapshot()
+snap = LIMITER.snapshot(token=SETTINGS.dhan_access_token)
 if snap["auth_block_remaining"] > 0:
     st.error("Dhan rejected the access token (401): requests are paused until you enter a new one.")
 elif snap["cooldown_remaining"] > 0:

@@ -101,7 +101,7 @@ def init_session_state() -> None:
 def render_engine_sidebar() -> None:
     """Visible on every page: shows the background auto-trader and lets you stop it."""
     with st.sidebar:
-        snap = LIMITER.snapshot()
+        snap = LIMITER.snapshot(token=SETTINGS.dhan_access_token)
         if snap["auth_block_remaining"] > 0:
             st.error(
                 "Dhan rejected your access token (it expires about every 24 hours). Requests are paused so the "
