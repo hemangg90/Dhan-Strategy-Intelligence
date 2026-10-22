@@ -6,10 +6,13 @@ token that does not work".
 """
 from __future__ import annotations
 
+import datetime as dt
+
 import streamlit as st
 
 from quant_intelligence.brokers.dhan_api_client import DhanApiClient, DhanApiError
-from quant_intelligence.config.credentials import mask_secret, token_status, update_dhan_credentials
+from quant_intelligence.config.credentials import (mask_secret, token_status, update_dhan_credentials,
+                                                 update_dhan_totp)
 from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.ui import format as F
 from quant_intelligence.ui.state import invalidate_cached_analysis
@@ -116,3 +119,45 @@ def render_credentials_panel() -> None:
                         "recomputes on its next run.")
             st.caption("On Streamlit Cloud this panel only changes the running app (it resets on reboot and is shared by "
                        "everyone who opens it). Put the token in the app's Secrets for a lasting change.")
+        _render_totp_form()
+
+
+def _render_totp_form() -> None:
+    """PIN + TOTP secret for the token keeper, so an expired (or never entered) token is replaced automatically."""
+    from quant_intelligence.brokers.dhan_auth import TOKEN_KEEPER
+
+    st.markdown("**Automatic token (PIN + TOTP)**")
+    st.caption("Enable TOTP in Dhan (Profile > Access DhanHQ APIs) and paste the setup key shown under the QR code. "
+               "These let the app create new tokens for your account: treat them like a password."
+               + (" PIN and TOTP secret are set; saving replaces them." if TOKEN_KEEPER.totp_configured() else ""))
+    with st.form("dhan_totp_form", clear_on_submit=True):
+        client_id = st.text_input("Client ID", value=SETTINGS.dhan_client_id, key="dhan_totp_client_id")
+        pin = st.text_input("Dhan PIN", type="password")
+        secret = st.text_input("TOTP secret (setup key)", type="password")
+        submitted = st.form_submit_button("Save PIN and TOTP")
+    if not submitted:
+        return
+    try:
+        saved = update_dhan_totp(client_id, pin, secret)
+    except ValueError as e:
+        st.error(str(e))
+        return
+    st.success("Saved to .env and applied." if saved else
+               "Applied to the running app, but .env is not writable: put DHAN_PIN and DHAN_TOTP_SECRET in Secrets to keep them.")
+    if token_status(SETTINGS.dhan_access_token)["state"] not in ("missing", "expired"):
+        st.info("The current token is still valid; a new one will be generated with these if it ever expires.")
+        return
+    result = TOKEN_KEEPER.ensure_fresh()
+    if result == "generated":
+        st.session_state["dhan_api_client"] = DhanApiClient()
+        st.session_state.pop("dhan_broker", None)
+        invalidate_cached_analysis()
+        ok, msg = test_connection()
+        (st.success if ok else st.error)(f"New access token generated. {msg}")
+    elif result == "waiting":
+        st.warning(f"A recent attempt failed; the next try is in {F.duration(dt.timedelta(seconds=TOKEN_KEEPER.status()['retry_in']))} "
+                   "(spaced out so a wrong PIN cannot lock the account).")
+    elif result == "disabled":
+        st.warning("Token keeper is off (TOKEN_KEEPER=false): no token was generated.")
+    else:
+        st.error(f"Could not generate a token: {TOKEN_KEEPER.status()['last_error'] or result}")

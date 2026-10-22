@@ -40,6 +40,36 @@ def update_dhan_credentials(client_id: str, access_token: str) -> None:
     object.__setattr__(SETTINGS, "dhan_access_token", access_token)
 
 
+def update_dhan_totp(client_id: str, pin: str, totp_secret: str) -> bool:
+    """Set the Client ID, PIN and TOTP secret the token keeper uses to generate tokens (brokers/dhan_auth.py).
+
+    The secret is the base32 setup key Dhan shows when TOTP is enabled; spaces and dashes are dropped. Raises
+    ValueError on a missing value or a secret that is not base32. Applied in memory always; returns False when
+    .env could not be written (read-only hosts), True when it was saved there too."""
+    client_id, pin = client_id.strip(), pin.strip()
+    secret = totp_secret.replace(" ", "").replace("-", "").strip().upper()
+    if not client_id or not pin or not secret:
+        raise ValueError("Client ID, PIN and TOTP secret are all required.")
+    try:
+        base64.b32decode(secret + "=" * (-len(secret) % 8))
+    except Exception:
+        raise ValueError("The TOTP secret is not valid: paste the setup key Dhan shows under the QR code.") from None
+
+    values = {"DHAN_CLIENT_ID": client_id, "DHAN_PIN": pin, "DHAN_TOTP_SECRET": secret}
+    saved = True
+    try:
+        ENV_PATH.touch(exist_ok=True)
+        for key, value in values.items():
+            set_key(str(ENV_PATH), key, value, quote_mode="never")
+    except OSError:
+        saved = False
+    os.environ.update(values)
+    object.__setattr__(SETTINGS, "dhan_client_id", client_id)
+    object.__setattr__(SETTINGS, "dhan_pin", pin)
+    object.__setattr__(SETTINGS, "dhan_totp_secret", secret)
+    return saved
+
+
 _IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 

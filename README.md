@@ -245,7 +245,8 @@ Dhan access tokens last 24 hours. The **token keeper** (`brokers/dhan_auth.py`) 
 
 It makes at most one attempt at a time, waits 10 minutes after a failure (a wrong PIN must not lock the account),
 never puts the PIN/TOTP in logs or error messages, and applies the new token to the running app (and `.env` when
-writable). The status shows in *API Keys*. **Treat `DHAN_PIN` and `DHAN_TOTP_SECRET` like passwords:** put them in
+writable). The status shows in *API Keys*, where the PIN and TOTP secret can also be entered (*Automatic token
+(PIN + TOTP)*; saved to `.env` and, if no valid token is set, used at once to generate one). **Treat `DHAN_PIN` and `DHAN_TOTP_SECRET` like passwords:** put them in
 Streamlit Secrets or `.env`, never in git or chat; they let anyone who has them mint tokens for your account. On
 Streamlit Cloud the sidebar only changes the running app (lost on reboot) - put lasting values in the app's Secrets.
 Disable with `TOKEN_KEEPER=false`. The renew/generate calls follow Dhan's documented endpoints but could only be
