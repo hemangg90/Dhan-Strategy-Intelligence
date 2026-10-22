@@ -14,8 +14,8 @@ from quant_intelligence.options.option_selector import (
     OptionSelectionError,
     fetch_chain,
     get_underlying_info,
+    choose_contract,
     option_segment_for,
-    select_contract,
 )
 from quant_intelligence.options.premium_model import PremiumSizingError, translate_setup
 from quant_intelligence.ranking.ranking_engine import TIE_BREAK_TAG, tradable
@@ -122,10 +122,12 @@ if chain is None or chain.underlying != underlying:
     st.warning("Fetch a live option chain for this underlying to resolve a tradeable contract.")
     st.stop()
 
-moneyness_offset = st.slider("Moneyness offset (0 = ATM, + = further OTM)", 0, 5, SETTINGS.option_moneyness_offset)
+moneyness_offset = st.slider("Moneyness offset (0 = ATM, + = further OTM)", 0, 5, SETTINGS.option_moneyness_offset,
+                             disabled=SETTINGS.option_selection == "BEST",
+                             help="Ignored while OPTION_SELECTION=BEST: the strike is the top-ranked one (Option Chain page).")
 try:
     lot_size = get_underlying_info(underlying)["lot_size"]
-    contract = select_contract(chain, setup.direction, transaction, moneyness_offset, lot_size)
+    contract = choose_contract(chain, setup.direction, transaction, moneyness_offset, lot_size)
     premium_setup = translate_setup(setup, contract)
 except (OptionSelectionError, PremiumSizingError) as e:
     st.error(f"Could not resolve a tradeable option: {e}")

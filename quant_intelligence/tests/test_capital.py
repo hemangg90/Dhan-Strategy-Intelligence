@@ -43,7 +43,7 @@ def test_auto_cycle_refuses_a_buy_it_cannot_afford(monkeypatch):
     monkeypatch.setattr(auto_trader, "get_strategy", lambda name: object())
     monkeypatch.setattr(auto_trader, "detect_setup", lambda *a, **k: SimpleNamespace(status=auto_trader.SETUP_TRIGGERED, setup=setup))
     monkeypatch.setattr(auto_trader, "get_underlying_info", lambda u: {"lot_size": 100})
-    monkeypatch.setattr(auto_trader, "select_contract", lambda *a, **k: contract)
+    monkeypatch.setattr(auto_trader, "choose_contract", lambda *a, **k: contract)
     monkeypatch.setattr(auto_trader, "translate_setup", lambda *a, **k: premium)
     monkeypatch.setattr(auto_trader, "size_position", lambda *a, **k: 100)  # 100 x Rs 50 = Rs 5,000 > Rs 1,000
 

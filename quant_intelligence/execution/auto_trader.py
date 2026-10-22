@@ -29,8 +29,8 @@ from quant_intelligence.options.chain_analytics import ChainSnapshot
 from quant_intelligence.options.option_selector import (
     OptionSelectionError,
     get_underlying_info,
+    choose_contract,
     option_segment_for,
-    select_contract,
 )
 from quant_intelligence.options.premium_model import PremiumSizingError, translate_setup
 from quant_intelligence.research.pipeline import PipelineOutput
@@ -269,7 +269,10 @@ def _run_auto_option_cycle(
 
     try:
         lot_size = get_underlying_info(underlying)["lot_size"]
-        contract = select_contract(chain, setup.direction, transaction, SETTINGS.option_moneyness_offset, lot_size)
+        cap_pct = limits_for(account.market).max_capital_per_trade_pct if account is not None else 0.0
+        max_outlay = account.equity * cap_pct / 100.0 if cap_pct > 0 else None  # BEST skips strikes one lot of which is over the cap
+        contract = choose_contract(chain, setup.direction, transaction, SETTINGS.option_moneyness_offset, lot_size,
+                                   max_outlay=max_outlay)
         premium_setup = translate_setup(setup, contract)
     except (OptionSelectionError, PremiumSizingError) as e:
         result.reason = f"Could not resolve a tradeable option: {e}"

@@ -44,6 +44,13 @@ class StrikeRow:
     pe_iv: float | None
     pe_delta: float | None
     pe_security_id: str | None
+    # Quote depth and decay, used by options/strike_ranker.py. Optional so a chain without them still parses.
+    ce_bid: float | None = None
+    ce_ask: float | None = None
+    ce_theta: float | None = None
+    pe_bid: float | None = None
+    pe_ask: float | None = None
+    pe_theta: float | None = None
 
     @property
     def pcr_at_strike(self) -> float | None:
@@ -167,6 +174,9 @@ def parse_option_chain(underlying: str, expiry: str, raw_response: dict) -> Chai
                 ce_iv=ce.get("implied_volatility"),
                 ce_delta=(ce.get("greeks") or {}).get("delta"),
                 ce_security_id=ce.get("security_id"),
+                ce_bid=ce.get("top_bid_price"),
+                ce_ask=ce.get("top_ask_price"),
+                ce_theta=(ce.get("greeks") or {}).get("theta"),
                 pe_ltp=pe.get("last_price"),
                 pe_oi=pe.get("oi"),
                 pe_oi_change=_oi_change(pe),
@@ -174,6 +184,9 @@ def parse_option_chain(underlying: str, expiry: str, raw_response: dict) -> Chai
                 pe_iv=pe.get("implied_volatility"),
                 pe_delta=(pe.get("greeks") or {}).get("delta"),
                 pe_security_id=pe.get("security_id"),
+                pe_bid=pe.get("top_bid_price"),
+                pe_ask=pe.get("top_ask_price"),
+                pe_theta=(pe.get("greeks") or {}).get("theta"),
             )
         )
     strikes.sort(key=lambda s: s.strike)

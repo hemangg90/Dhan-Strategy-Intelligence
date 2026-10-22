@@ -99,7 +99,7 @@ def _cycle(monkeypatch, tie_break, tag_expected):
     monkeypatch.setattr(auto_trader, "get_strategy", lambda n: object())
     monkeypatch.setattr(auto_trader, "detect_setup", lambda *a, **k: SimpleNamespace(status=auto_trader.SETUP_TRIGGERED, setup=setup))
     monkeypatch.setattr(auto_trader, "get_underlying_info", lambda u: {"lot_size": 100})
-    monkeypatch.setattr(auto_trader, "select_contract", lambda *a, **k: contract)
+    monkeypatch.setattr(auto_trader, "choose_contract", lambda *a, **k: contract)
     monkeypatch.setattr(auto_trader, "translate_setup", lambda *a, **k: premium)
     ranking = SimpleNamespace(is_no_trade=False, selected_strategy="Momentum", tie_break=tie_break, reason="r",
                               tie_runner_up="VWAP")

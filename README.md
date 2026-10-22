@@ -109,7 +109,7 @@ promise of profit** (read [Known limitations](#known-limitations-read-this-befor
    bar (some strategies also need the live option chain).
 4. **Resolve a contract.** The live Dhan option chain is fetched; the option selector maps
    LONG -> call, SHORT -> put (BUY) or the mirrored SELL leg, picks the strike (ATM by default,
-   configurable moneyness offset) and expiry (nearest by default).
+   configurable moneyness offset; or the top-ranked strike with `OPTION_SELECTION=BEST`) and expiry (nearest by default).
 5. **Translate to premium.** The underlying's stop/target distance is scaled by the option's live
    delta into a premium stop/target. A SELL *requires* a valid premium stop (unbounded risk otherwise).
 6. **Size.** Quantity (whole lots) is the smaller of a risk-based size (90% of the max risk per trade)
@@ -232,6 +232,20 @@ banner on the NSE/MCX panels naming the reason, and a table with a **Refresh can
 *System Logs & Health* page. Pages also recompute their cached analysis when the credentials change, when the
 last result was not OK for a minute, or when a new bar has closed - saving a new token clears stale results
 immediately. Candle files are written atomically and per instrument one fetch runs at a time, so the keeper and the pages never corrupt or duplicate each other's downloads. Disable with `DATA_KEEPER=false`.
+
+### Best-strike selection (Option Chain page)
+
+By default the strike is ATM plus `OPTION_MONEYNESS_OFFSET`. The **Option Chain** page (Strategy Intelligence) ranks
+every strike of the live chain for the chosen side and action, and `OPTION_SELECTION=BEST` makes the auto-traders and
+the paper/live order tickets trade the top one (`options/strike_ranker.py`, pure logic over the fetched chain).
+
+A strike is first **filtered**: it needs a quote, open interest and volume above zero, a bid-ask spread under 10%, and
+|delta| inside a band (bought options 0.30-0.60, written ones 0.10-0.35); a bought option whose one-lot cost exceeds the
+per-trade capital cap is also dropped. The rest are **scored** 0-100: 35% how close |delta| is to the target (0.45 bought,
+0.20 written), 25% spread tightness, 25% open interest and volume relative to the busiest strike on that side, and 15% time
+decay (|theta|/premium per day: low is better when buying, high when writing). A missing input scores a neutral 50 and is
+noted in the table, never guessed. The weights and bands are heuristics, not a fitted model, and nothing shows the ranking
+beats plain ATM: compare on paper before relying on it. Leave `OPTION_SELECTION` unset to keep the ATM rule.
 
 ### Token lifecycle (token keeper)
 
@@ -506,6 +520,7 @@ SQLite even with no `.env`.
 | `DHAN_BASE_URL` | `https://api.dhan.co/v2` | Dhan API base URL. |
 | `OPTION_UNDERLYINGS` | `NIFTY,BANKNIFTY,FINNIFTY,MIDCPNIFTY,SENSEX` | Index underlyings scanned. |
 | `OPTION_MONEYNESS_OFFSET` | `0` | 0 = ATM; +N = N strikes further OTM. |
+| `OPTION_SELECTION` | `OFFSET` | `OFFSET` = ATM +/- the offset above. `BEST` = rank every strike of the live chain (delta, bid-ask spread, open interest/volume, time decay; a bought option must also fit the per-trade capital cap) and trade the top one. Heuristic, not shown to beat ATM; see *Best-strike selection*. |
 | `OPTION_EXPIRY_PREFERENCE` | `NEAREST` | `NEAREST` or `NEAREST_MONTHLY`. |
 | `OPTION_PRODUCT_TYPE` | `INTRADAY` | `INTRADAY`, `MARGIN` or `CNC` (order product type). |
 | `DEFAULT_INSTRUMENT`, `DEFAULT_TIMEFRAME` | `NIFTY`, `5min` | Dashboard defaults. |

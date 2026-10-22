@@ -92,3 +92,21 @@ def ticket_math(
         "funds_ok": funds_ok,
         "utilisation_pct": (amount / available * 100.0) if available and side == "BUY" else None,
     }
+
+
+def ranked_frame(ranked) -> pd.DataFrame:
+    """The strike ranking (options/strike_ranker.RankedStrike list, best first) as a table: score, the four score
+    parts as 0-100, the raw numbers behind them, and why a strike was rejected or what data it lacked."""
+    return pd.DataFrame(
+        [
+            {
+                "rank": i + 1 if r.eligible else None,
+                "strike": r.strike, "type": r.option_type, "score": round(r.score, 1) if r.eligible else None,
+                "premium": r.premium, "delta": r.delta, "iv": r.iv, "spread_%": r.spread_pct, "theta_%/day": r.theta_pct,
+                "oi": r.oi, "volume": r.volume,
+                **{f"{k}_fit": round(v * 100) for k, v in r.parts.items()},
+                "notes": "; ".join(r.notes),
+            }
+            for i, r in enumerate(ranked)
+        ]
+    )

@@ -32,6 +32,7 @@ WORKSPACES = {
         _page("pages/00_Candidate.py", "Candidate"),
         _page("pages/00_Decision_Center.py", "Decision Center"),
         _page("pages/02_Strategy_Intelligence.py", "Strategy Ranking"),
+        _page("pages/19_Option_Chain.py", "Option Chain"),
         _page("pages/03_Strategy_Library.py", "Strategy Library"),
     ],
     "Research Lab": [

@@ -172,11 +172,15 @@ def select_contract(
     target_idx = max(0, min(len(sorted_strikes) - 1, target_idx))
     row = sorted_strikes[target_idx]
 
+    return build_contract(chain, row, option_type, transaction, lot_size)
+
+
+def build_contract(chain: ChainSnapshot, row, option_type: str, transaction: str, lot_size: int = 1) -> OptionContract:
+    """The tradeable OptionContract for one side (CE/PE) of one strike row of `chain`."""
     if option_type == "CE":
         premium, delta, iv, security_id = row.ce_ltp, row.ce_delta, row.ce_iv, row.ce_security_id
     else:
         premium, delta, iv, security_id = row.pe_ltp, row.pe_delta, row.pe_iv, row.pe_security_id
-
     if premium is None or security_id is None:
         raise OptionSelectionError(f"No {option_type} quote/security_id available at strike {row.strike}")
 
@@ -194,3 +198,24 @@ def select_contract(
         delta=delta,
         iv=iv,
     )
+
+
+def choose_contract(
+    chain: ChainSnapshot,
+    direction: str,
+    transaction: str,
+    moneyness_offset: int = 0,
+    lot_size: int = 1,
+    mode: str | None = None,
+    max_outlay: float | None = None,
+) -> OptionContract:
+    """The contract to trade, by OPTION_SELECTION: "OFFSET" (default) = `select_contract` (ATM +/- the offset);
+    "BEST" = the top-ranked eligible strike from `strike_ranker`. `max_outlay` (Rs, one lot's premium cost) only
+    applies to BEST. Callers pass `mode` only to override the setting."""
+    from quant_intelligence.config.settings import SETTINGS
+
+    if (mode or SETTINGS.option_selection) == "BEST":
+        from quant_intelligence.options.strike_ranker import select_best_contract
+
+        return select_best_contract(chain, direction, transaction, lot_size, max_outlay)
+    return select_contract(chain, direction, transaction, moneyness_offset, lot_size)

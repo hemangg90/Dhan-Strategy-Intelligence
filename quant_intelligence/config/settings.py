@@ -164,6 +164,9 @@ class Settings:
         s.strip().upper() for s in os.getenv("OPTION_UNDERLYINGS", "NIFTY,BANKNIFTY,FINNIFTY,MIDCPNIFTY,SENSEX").split(",") if s.strip()
     )
     option_moneyness_offset: int = _int_env("OPTION_MONEYNESS_OFFSET", 0)  # 0=ATM, +N = N strikes OTM
+    # How the strike is chosen: OFFSET = ATM +/- OPTION_MONEYNESS_OFFSET; BEST = rank the whole chain on delta,
+    # bid-ask spread, liquidity and decay (options/strike_ranker.py). Anything else falls back to OFFSET.
+    option_selection: str = "BEST" if os.getenv("OPTION_SELECTION", "").strip().upper() == "BEST" else "OFFSET"
     option_expiry_preference: str = os.getenv("OPTION_EXPIRY_PREFERENCE", "NEAREST").strip().upper()
     option_product_type: str = os.getenv("OPTION_PRODUCT_TYPE", "INTRADAY").strip().upper()
 
