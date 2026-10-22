@@ -9,5 +9,10 @@ font = "sans serif"
 [client]
 toolbarMode = "minimal"
 
+[server]
+# Hosted containers have a tiny inotify limit: the file watcher fails with "inotify instance limit reached" and floods the log.
+# The app is not edited while it runs there, so auto-reload on save is not needed (set to "auto" for local development).
+fileWatcherType = "none"
+
 [browser]
 gatherUsageStats = false
