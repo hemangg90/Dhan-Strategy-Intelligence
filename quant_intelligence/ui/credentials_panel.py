@@ -69,7 +69,9 @@ def _keeper_line() -> str:
     ks = TOKEN_KEEPER.status()
     if not ks["enabled"]:
         return "Auto-renew: **off** (TOKEN_KEEPER=false)"
-    mode = ("renews before expiry and generates a new token with your PIN + TOTP if it ever expires"
+    mode = ("renews before expiry, but Dhan refused the saved PIN / TOTP secret: correct them below to re-enable "
+            "automatic recovery" if ks["totp_refused"] else
+            "renews before expiry and generates a new token with your PIN + TOTP if it ever expires or is rejected"
             if ks["totp"] else
             f"renews the token when under {SETTINGS.token_renew_before_hours:g}h remain; "
             "add DHAN_PIN and DHAN_TOTP_SECRET in Secrets to also recover from an expired token")

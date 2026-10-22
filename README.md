@@ -241,9 +241,13 @@ Dhan access tokens last 24 hours. The **token keeper** (`brokers/dhan_auth.py`) 
 1. **Renews** it with Dhan's `RenewToken` when under `TOKEN_RENEW_BEFORE_HOURS` (8) remain - needs no extra setup,
    but only works while the token is still active.
 2. If `DHAN_PIN` and `DHAN_TOTP_SECRET` are set, **generates** a new token from a time-based one-time code (RFC 6238,
-   standard library) - this also recovers from a token that has already expired.
+   standard library) - this also recovers from a token that has already expired, from one Dhan rejects before its
+   expiry (401 / DH-901: revoked, or replaced by a token made elsewhere), and from no token at all. The API client asks
+   the keeper for a new token when it meets any of these, then sends a read once more (orders are never re-sent).
 
-It makes at most one attempt at a time, waits 10 minutes after a failure (a wrong PIN must not lock the account),
+It makes at most one attempt at a time, waits 1 minute after a network/server error and 10 minutes after any other
+failure, and does not retry a PIN/TOTP Dhan refused until it is changed (a wrong PIN must not lock the account); it
+also waits for a fresh code when the current one is about to roll over. It
 never puts the PIN/TOTP in logs or error messages, and applies the new token to the running app (and `.env` when
 writable). The status shows in *API Keys*, where the PIN and TOTP secret can also be entered (*Automatic token
 (PIN + TOTP)*; saved to `.env` and, if no valid token is set, used at once to generate one). **Treat `DHAN_PIN` and `DHAN_TOTP_SECRET` like passwords:** put them in

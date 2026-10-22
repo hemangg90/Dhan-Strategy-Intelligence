@@ -118,7 +118,8 @@ class DataKeeper:
             return (f"Dhan access token expired {status['expires_at']:%d %b %H:%M} IST - "
                     "enter a new token (or set DHAN_PIN/DHAN_TOTP_SECRET for automatic renewal)")
         if LIMITER.auth_block_remaining(token) > 0:
-            return "Dhan rejected the access token (401) - enter a new token"
+            return ("Dhan rejected the access token (401) - enter a new token "
+                    "(or set DHAN_PIN/DHAN_TOTP_SECRET for automatic recovery)")
         return None
 
     def run_once(self, symbols: list[str] | None = None) -> dict:

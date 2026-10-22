@@ -93,21 +93,34 @@ class DhanApiClient:
         else:
             LIMITER.acquire(category)
 
-    def _request(self, method: str, path: str, body: dict | None = None, *, category: str, retry: bool = True) -> dict:
-        """One Dhan call: breaker check -> spacing -> request -> 429 backoff/retry (reads only)."""
+    def _recover_token(self) -> bool:
+        """Ask the token keeper for a new token (renew/generate) and pick it up. Only for clients that follow the
+        live settings; the keeper rate-limits its own attempts, so calling this on every failure is safe."""
+        if not self._follows_settings:
+            return False
+        from quant_intelligence.brokers.dhan_auth import TOKEN_KEEPER
+
+        if TOKEN_KEEPER.ensure_fresh() not in ("renewed", "generated"):
+            return False
+        self.client_id, self.access_token = SETTINGS.dhan_client_id, SETTINGS.dhan_access_token
+        return True
+
+    def _request(self, method: str, path: str, body: dict | None = None, *, category: str, retry: bool = True,
+                 _recovered: bool = False) -> dict:
+        """One Dhan call: breaker check -> spacing -> request -> 429 backoff/retry (reads only).
+
+        Token problems recover by themselves where possible: a missing or expired token, or one Dhan rejects (401 /
+        DH-901), is replaced through the token keeper and a READ is then sent once more. Orders are never re-sent."""
         if self._follows_settings:
             self.client_id, self.access_token = SETTINGS.dhan_client_id, SETTINGS.dhan_access_token
+            if self.client_id and not self.access_token:
+                self._recover_token()  # PIN + TOTP set but no token yet: generate one
         self._require_configured()
         limits = SETTINGS.dhan
         attempts = limits.max_attempts if retry else 1
         status = token_status(self.access_token)
-        if self._follows_settings and status["state"] == "expired":
-            # One automatic recovery (renew/generate) before giving up; the keeper rate-limits its own attempts.
-            from quant_intelligence.brokers.dhan_auth import TOKEN_KEEPER
-
-            if TOKEN_KEEPER.ensure_fresh() in ("renewed", "generated"):
-                self.client_id, self.access_token = SETTINGS.dhan_client_id, SETTINGS.dhan_access_token
-                status = token_status(self.access_token)
+        if status["state"] == "expired" and self._recover_token():
+            status = token_status(self.access_token)
         if status["state"] == "expired":
             raise DhanApiError(
                 f"Your Dhan access token expired on {status['expires_at']:%d %b %H:%M} IST (tokens last about 24 hours). "
@@ -116,6 +129,8 @@ class DhanApiClient:
             )
         for attempt in range(1, attempts + 1):
             blocked = LIMITER.auth_block_remaining(self.access_token)
+            if blocked > 0 and self._recover_token():
+                blocked = LIMITER.auth_block_remaining(self.access_token)
             if blocked > 0:
                 raise DhanApiError(
                     f"Dhan rejected your credentials (401); not sending requests for another {blocked:.0f}s. "
@@ -149,8 +164,10 @@ class DhanApiClient:
                 if e.status_code in TRANSIENT_STATUS and retry and attempt < attempts:
                     time.sleep(backoff_delay(attempt, 1.0, cap=10.0))
                     continue
-                if e.status_code == 401:
+                if e.status_code == 401 or "DH-901" in str(e):
                     LIMITER.record_auth_failure(self.access_token)
+                    if self._recover_token() and retry and not _recovered:
+                        return self._request(method, path, body, category=category, retry=retry, _recovered=True)
                 if e.status_code == 429:
                     retry_after = _retry_after_seconds(resp)
                     opened = LIMITER.record_429(category, retry_after)
