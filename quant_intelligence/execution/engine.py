@@ -24,6 +24,7 @@ from quant_intelligence.config.settings import DATA_CACHE_DIR, SETTINGS
 from quant_intelligence.execution.mover_selection import MoverConfig, Selection, select as select_movers
 from quant_intelligence.execution.multi_cycle import run_multi_instrument_cycle
 from quant_intelligence.execution.square_off import in_close_window, square_off_positions
+from quant_intelligence.risk.options_risk import exposure_from_positions
 from quant_intelligence.risk.risk_engine import AccountState
 from quant_intelligence.utils.logging_utils import log_event
 from quant_intelligence.utils.market_profile import MCX, NSE, MarketProfile, profile_for
@@ -363,6 +364,7 @@ class TradingEngine(ScanRunner):
                 closed_today=closed_today,
                 day_peak_pnl=self.day_peak_pnl,
                 market=self.profile.name,
+                option_exposure=exposure_from_positions(open_positions),
             )
 
 

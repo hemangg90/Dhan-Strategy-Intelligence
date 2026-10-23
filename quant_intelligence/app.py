@@ -27,6 +27,10 @@ WORKSPACES = {
         _page("pages/01_Market_State.py", "Market State"),
         _page("pages/05_Regime_Analysis.py", "Regime Analysis"),
         _page("pages/16_NSE_Heatmap.py", "NSE Heatmap"),
+        _page("pages/20_Market_Intelligence.py", "Levels & Structure"),
+    ],
+    "Options Intelligence": [
+        _page("pages/21_Options_Intelligence.py", "Chain, Selector & Risk"),
     ],
     "Strategy Intelligence": [
         _page("pages/00_Candidate.py", "Candidate"),

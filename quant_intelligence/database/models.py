@@ -291,6 +291,9 @@ class Position(Base):
     expected_r = Column(Float)  # the ranker's conditional net expected R for the strategy at entry
     confidence = Column(String(24))  # HIGH / MEDIUM / LOW ...
     regime = Column(String(32))  # market regime at entry
+    # Per-unit Greeks and spot when an option position was opened ({"delta","gamma","vega","theta","spot"}); the risk engine's
+    # portfolio Greek exposure is measured from these. Not re-marked afterwards.
+    entry_greeks = Column(JSON)
 
 
 class RiskEvent(Base):
@@ -312,6 +315,25 @@ class RiskLimitOverride(Base):
     value = Column(Float, nullable=False)
     updated_at = Column(DateTime, default=utcnow)
     reason = Column(Text)
+
+
+class IvObservation(Base):
+    """ATM implied volatility recorded from a live option-chain snapshot (options/iv_history.py).
+
+    The only source of IV history the application has: it starts empty and grows as the app runs. `atm_iv` is the
+    broker-reported ATM implied volatility in percent (as in the chain). One row per (underlying, expiry, recorded_at)."""
+    __tablename__ = "iv_observations"
+    __table_args__ = (UniqueConstraint("underlying", "expiry", "recorded_at", name="uq_iv_obs"),)
+
+    id = Column(Integer, primary_key=True)
+    underlying = Column(String(32), nullable=False, index=True)
+    expiry = Column(String(16), nullable=False)
+    recorded_at = Column(DateTime, nullable=False, index=True)  # naive IST snapshot time
+    atm_iv = Column(Float, nullable=False)  # percent
+    spot = Column(Float)
+    atm_strike = Column(Float)
+    trading_days_to_expiry = Column(Float)
+    source = Column(String(16), default="chain")
 
 
 class SystemEvent(Base):

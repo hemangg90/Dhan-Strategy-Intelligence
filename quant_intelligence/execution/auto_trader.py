@@ -11,8 +11,9 @@ check (risk engine veto, mandatory-stop-on-SELL) applies identically.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from quant_intelligence.brokers.base_broker import OrderAck, OrderRequest
@@ -25,6 +26,17 @@ from quant_intelligence.execution.setup_detector import (
     detect_chain_setup,
     detect_setup,
 )
+from quant_intelligence.brokers.reconciliation import reconcile_paper
+from quant_intelligence.execution.setup_validation import PREFIX as VALIDATION_PREFIX, validate_setup
+from quant_intelligence.features.levels import assess_trade, find_levels
+from quant_intelligence.intelligence.market_context import context_from_pipeline
+from quant_intelligence.intelligence.options_context import build_options_context
+from quant_intelligence.options.contracts import quotes_from_chain
+from quant_intelligence.options.execution_quality import ExecutionLimits, assess_execution_quality
+from quant_intelligence.options.greeks import compute_greeks
+from quant_intelligence.options.scenario import ScenarioInputs
+from quant_intelligence.utils.market_profile import profile_for
+from quant_intelligence.utils.timeutil import now_ist
 from quant_intelligence.options.chain_analytics import ChainSnapshot
 from quant_intelligence.options.option_selector import (
     OptionSelectionError,
@@ -32,6 +44,7 @@ from quant_intelligence.options.option_selector import (
     choose_contract,
     option_segment_for,
 )
+from quant_intelligence.options.contract_scoring import select_best_contract as select_scored_contract
 from quant_intelligence.options.premium_model import PremiumSizingError, translate_setup
 from quant_intelligence.research.pipeline import PipelineOutput
 from quant_intelligence.execution.capital import capital_required, capital_summary
@@ -51,6 +64,9 @@ class AutoCycleResult:
     capital_required: float | None = None  # premium x quantity to BUY the resolved contract
     capital_used: float = 0.0  # capital actually committed by a filled BUY order
     tag: str | None = None  # "TIE-BREAK" when the trade came from a tied ranking
+    level_review: str = ""  # the support/resistance and liquidity-level reading for this entry
+    validation_warnings: list = field(default_factory=list)  # advisory findings of the setup-validation stage
+    contract_review: str = ""  # why this strike: the chain-scored pick (OI build-up, spread, delta, walls)
 
 
 def _sizable_inputs(account: AccountState, entry_price, stop_price, lot_size) -> bool:
@@ -156,12 +172,89 @@ def chain_needed(output: PipelineOutput, underlying: str, broker: PaperBroker, a
     return True
 
 
+LEVEL_NATIVE_STRATEGIES = {"Camarilla Pivot Reversal"}  # these trade the pivot levels themselves: stop and target are already levels
+LEVEL_VETO_PREFIX = "LEVEL CHECK:"
+
+
+def apply_level_check(output: PipelineOutput, setup, strategy_name: str | None, chain=None):
+    """Check a triggered setup against support/resistance and liquidity levels (features/levels.py).
+
+    Returns (setup, review, veto_reason): the setup with its stop/target moved to the levels (or unchanged), a one-line
+    reading for the log, and a reason when the trade must not go ahead (the next level leaves no room). Fail-open on
+    missing data: with no usable price history or ATR there are no levels, so the setup passes unchanged."""
+    if not SETTINGS.levels_enabled or strategy_name in LEVEL_NATIVE_STRATEGIES:
+        return setup, "", None
+    try:
+        atr = output.market_state.get("atr_14")
+        context = None
+        if chain is not None and hasattr(chain, "strikes"):
+            from quant_intelligence.options.contract_scoring import chain_context
+
+            context = chain_context(chain)
+        levels = find_levels(output.ohlcv, atr, context)
+        if not levels:
+            return setup, "", None
+        check = assess_trade(setup.direction, setup.entry_price, setup.stop_price, setup.target_price, levels, atr,
+                             SETTINGS.levels_min_room_mult, SETTINGS.levels_buffer_atr, output.ohlcv)
+    except Exception as e:  # a level-reading fault must never stop the trading cycle or place an unchecked order silently
+        from quant_intelligence.utils.logging_utils import log_event
+
+        log_event("levels", f"Level check failed, setup left unchanged: {e}", level="WARNING")
+        return setup, "", None
+    if not check.ok:
+        return setup, check.summary, f"{LEVEL_VETO_PREFIX} {check.reason}."
+    if check.stop_changed or check.target_capped:
+        setup = dataclasses.replace(setup, stop_price=check.stop, target_price=check.target,
+                                    meta={**setup.meta, "levels": check.summary})
+    return setup, check.summary, None
+
+
 def _expectation(output: PipelineOutput) -> dict:
     """What the ranker expected from the strategy it selected (stored on the order and position)."""
     ranking = output.ranking
     score = next((s for s in getattr(ranking, "ranked", []) if s.strategy_name == ranking.selected_strategy), None)
     return {"expected_r": getattr(score, "expected_r", None), "confidence": getattr(score, "confidence_label", None),
             "regime": getattr(output, "regime_label", None)}
+
+
+def _scenario_inputs(output: PipelineOutput, setup, market, chain: ChainSnapshot, now, underlying: str) -> ScenarioInputs | None:
+    """What the contract scenarios need: the underlying's ATR, a holding horizon, a move scale, and the strategy's own record
+    (target, stop, share of positive outcomes and the effective sample behind it). None when the ATR is unknown."""
+    if market is None or not market.atr:
+        return None
+    ranking = output.ranking
+    cond = next((si.conditional_metrics for si in getattr(output, "strategy_intel", []) if si.strategy_name == ranking.selected_strategy), {})
+    from quant_intelligence.utils.timeframe import parse_timeframe_minutes
+
+    bar_minutes = float(parse_timeframe_minutes(market.timeframe))
+    horizon = SETTINGS.scenario_horizon_bars
+    sigma_move = None
+    try:  # prefer the volatility model's stored forecast over ATR scaling when a fresh one exists
+        from quant_intelligence.volatility.store import latest_forecast
+
+        fc = latest_forecast(underlying, max_age_days=5.0)
+        if fc and fc.get("sigma_1d"):
+            sigma_move = chain.spot_price * float(fc["sigma_1d"]) * (horizon * bar_minutes / profile_for(underlying).session_minutes) ** 0.5
+    except Exception:
+        sigma_move = None
+    return ScenarioInputs(
+        spot=chain.spot_price, atr=market.atr, now=now, horizon_bars=horizon, bar_minutes=bar_minutes, sigma_move=sigma_move,
+        direction=setup.direction, target_price=setup.target_price, stop_price=setup.stop_price,
+        win_prob=cond.get("prob_positive_return"), effective_n=cond.get("n_effective") or cond.get("sample_size"))
+
+
+def _option_risk_info(chain: ChainSnapshot, contract, quantity: int, transaction: str, now) -> tuple[dict, object | None]:
+    """The contract's quote, Greeks and time to expiry as the risk engine needs them. Anything unknown stays None so the
+    risk engine can refuse it; nothing is defaulted."""
+    quote = next((q for q in quotes_from_chain(chain) if q.strike == contract.strike and q.option_type == contract.option_type), None)
+    greeks = compute_greeks(quote, chain.spot_price, now) if quote is not None else None
+    info = {
+        "underlying": contract.underlying, "transaction": transaction,
+        "greeks": ({"delta": greeks.delta, "gamma": greeks.gamma, "vega": greeks.vega, "theta": greeks.theta, "spot": chain.spot_price}
+                   if greeks is not None and greeks.available else None),
+        "trading_days_to_expiry": greeks.trading_days if greeks is not None else None,
+    }
+    return info, quote
 
 
 def run_auto_option_cycle(
@@ -179,6 +272,11 @@ def run_auto_option_cycle(
     `allowed_direction` ("LONG"/"SHORT") comes from the heatmap mover selection: a BOUGHT option whose setup points the
     other way is skipped (reason starts "Direction filtered"). None = no restriction."""
     result = _run_auto_option_cycle(output, underlying, broker, client, chain, account, allowed_direction, move_note)
+    for note in (result.level_review, result.contract_review):
+        if note and result.reason:
+            result.reason = f"{result.reason} | {note}"
+    if result.validation_warnings and result.reason:
+        result.reason = f"{result.reason} | warnings: {'; '.join(result.validation_warnings)}"
     from quant_intelligence.reports.decision_log import log_cycle
 
     log_cycle(output, result)
@@ -267,12 +365,50 @@ def _run_auto_option_cycle(
         result.reason = "Setup triggered but no live option chain available to resolve a contract."
         return result
 
+    now = now_ist()
+    market_ctx = None
     try:
         lot_size = get_underlying_info(underlying)["lot_size"]
+    except OptionSelectionError as e:
+        result.reason = f"Could not resolve a tradeable option: {e}"
+        return result
+
+    if SETTINGS.setup_validation:
+        # The staged validation: data, session, freshness, an ACTIVE setup, eligible contracts and room to run. Any failure to
+        # build the contexts stops the trade (fail closed) rather than trading on unchecked data.
+        try:
+            market_ctx = context_from_pipeline(output, chain)
+            options_ctx = build_options_context(chain, now=now, realized_vol=output.market_state.get("realized_vol_20"),
+                                                atr=market_ctx.atr, expected_lot_size=lot_size,
+                                                limits=ExecutionLimits.from_settings())
+            verdict = validate_setup(ranking=output.ranking, setup_status=setup_status, market=market_ctx, options=options_ctx,
+                                     now=now, strategy_name=strategy_name, transaction=transaction)
+        except Exception as e:
+            result.reason = f"{VALIDATION_PREFIX} [CONTEXT_ERROR]: could not build the market and option context ({e})"
+            return result
+        result.level_review = verdict.level_review
+        result.validation_warnings = [w.message for w in verdict.warnings]
+        if not verdict.valid:
+            result.reason = verdict.message
+            return result
+        setup = verdict.setup
+    elif transaction == "BUY":  # a written option has its own payoff; 'room to run' is about the bought direction
+        setup, result.level_review, veto = apply_level_check(output, setup, strategy_name, chain)
+        if veto:
+            result.reason = veto
+            return result
+
+    try:
         cap_pct = limits_for(account.market).max_capital_per_trade_pct if account is not None else 0.0
-        max_outlay = account.equity * cap_pct / 100.0 if cap_pct > 0 else None  # BEST skips strikes one lot of which is over the cap
-        contract = choose_contract(chain, setup.direction, transaction, SETTINGS.option_moneyness_offset, lot_size,
-                                   max_outlay=max_outlay)
+        max_outlay = account.equity * cap_pct / 100.0 if cap_pct > 0 else None  # skips strikes one lot of which is over the cap
+        if SETTINGS.option_selection == "SCORED":
+            scenario = _scenario_inputs(output, setup, market_ctx, chain, now, underlying) if market_ctx is not None else None
+            choice = select_scored_contract(chain, setup.direction, transaction, lot_size, max_outlay, scenario=scenario, now=now)
+            contract = choice.contract
+            result.contract_review = choice.summary
+        else:
+            contract = choose_contract(chain, setup.direction, transaction, SETTINGS.option_moneyness_offset, lot_size,
+                                       max_outlay=max_outlay)
         premium_setup = translate_setup(setup, contract)
     except (OptionSelectionError, PremiumSizingError) as e:
         result.reason = f"Could not resolve a tradeable option: {e}"
@@ -294,6 +430,15 @@ def _run_auto_option_cycle(
             )
             return result
 
+    if SETTINGS.reconcile_before_order:
+        # The book in memory must match what is stored before another order is added to it (a swallowed save error would
+        # otherwise go unnoticed and a restart would rebuild a different book).
+        recon = reconcile_paper(broker)
+        if not recon.ok:
+            result.reason = f"RECONCILIATION FAILED - no new orders until it is resolved: {recon.reason}"
+            return result
+
+    option_info, quote = (_option_risk_info(chain, contract, quantity, transaction, now) if SETTINGS.setup_validation else (None, None))
     proposed = ProposedTrade(
         strategy_name=strategy_name,
         direction=setup.direction,
@@ -303,8 +448,10 @@ def _run_auto_option_cycle(
         quantity=quantity,
         relative_volume=output.market_state.get("relative_volume"),
         data_quality_status=output.data_quality_status,
-        quote_time=getattr(output, "timestamp", None), long_premium=True,
+        quote_time=(chain.fetched_at if option_info is not None else getattr(output, "timestamp", None)), long_premium=True,
         instrument=underlying,
+        bid=quote.bid if quote is not None else None, ask=quote.ask if quote is not None else None,
+        lot_size=contract.lot_size if option_info is not None else None, option=option_info,
     )
     decision = evaluate_trade(account, proposed)
     result.risk_decision_id = decision.decision_id
@@ -332,6 +479,7 @@ def _run_auto_option_cycle(
         expiry=contract.expiry,
         lot_size=contract.lot_size,
         tag=result.tag,
+        entry_greeks=(option_info or {}).get("greeks"),
         **_expectation(output),
     )
     result.order = broker.place_order(order, market_price=premium_setup.entry_price)
@@ -344,6 +492,8 @@ def _run_auto_option_cycle(
 def run_auto_equity_cycle(output: PipelineOutput, broker: PaperBroker, account: AccountState) -> AutoCycleResult:
     """One automatic equity cycle (see `_run_auto_equity_cycle`); the outcome is also written to the decision log."""
     result = _run_auto_equity_cycle(output, broker, account)
+    if result.level_review and result.reason:
+        result.reason = f"{result.reason} | {result.level_review}"
     from quant_intelligence.reports.decision_log import log_cycle
 
     log_cycle(output, result)
@@ -385,6 +535,10 @@ def _run_auto_equity_cycle(output: PipelineOutput, broker: PaperBroker, account:
         return result
 
     setup = setup_status.setup
+    setup, result.level_review, veto = apply_level_check(output, setup, strategy_name)
+    if veto:
+        result.reason = veto
+        return result
     quantity = size_position(account, setup.entry_price, setup.stop_price)
     if quantity <= 0:
         result.reason = _zero_size_reason(account, setup.entry_price, setup.stop_price)

@@ -71,12 +71,18 @@ def evaluate_instrument(
     strategies=None,
     max_points: int | None = None,
     analogue_config=None,
+    extra_frame: pd.DataFrame | None = None,
 ) -> list[Decision]:
+    """`extra_frame`: optional per-bar features aligned row-for-row with the SORTED `ohlcv` (e.g. `structure_feature_frame`), added to
+    every observation and to the decision-time query. They must be causal (row i uses only bars up to i)."""
     quantity = quantity or default_quantity(instrument)
     market = market_for(instrument)
     ohlcv = ohlcv.sort_values("timestamp").reset_index(drop=True)
     features = compute_features(ohlcv, profile_for(instrument))
     feat_by_ts = features.set_index("timestamp")
+    if extra_frame is not None and len(extra_frame) != len(ohlcv):
+        raise ValueError("extra_frame must have one row per bar of ohlcv")
+    extra_by_ts = extra_frame.set_index("timestamp") if extra_frame is not None else None
     ts_to_idx = {ts: i for i, ts in enumerate(ohlcv["timestamp"])}
 
     strategies = strategies if strategies is not None else get_all_strategies()
@@ -90,7 +96,7 @@ def evaluate_instrument(
         trades = [t for t in bt.trades if t.setup.timestamp in feat_by_ts.index]
         if not trades:
             continue  # never produces a setup -> permanently INSUFFICIENT_DATA, cannot affect selection
-        obs = observations_from_trades(trades, feat_by_ts, strat.name, quantity, market)
+        obs = observations_from_trades(trades, feat_by_ts, strat.name, quantity, market, extra_by_ts=extra_by_ts)
         entry_idx = np.array([ts_to_idx[t.setup.timestamp] for t in trades])
         exit_idx = np.array([ts_to_idx.get(t.exit_timestamp, len(ohlcv)) for t in trades])
         obs["entry_idx"], obs["exit_idx"] = entry_idx, exit_idx
@@ -121,6 +127,8 @@ def evaluate_instrument(
     decisions: list[Decision] = []
     for t in signal_bars:
         current = features.iloc[t].drop(labels=["timestamp"]).to_dict()
+        if extra_frame is not None:
+            current.update({k: v for k, v in extra_frame.iloc[t].to_dict().items() if k != "timestamp"})
         scores = []
         for name, d in per_strategy.items():
             known_mask = (d["exit_idx"] <= t) & (d["entry_idx"] < t)

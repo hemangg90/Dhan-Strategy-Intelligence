@@ -71,6 +71,16 @@ def greeks(S: float, K: float, T: float, r: float, q: float, sigma: float, kind:
     return {"delta": delta, "gamma": gamma, "vega": vega, "theta": theta}
 
 
+def rho(S: float, K: float, T: float, r: float, q: float, sigma: float, kind: str) -> float:
+    """Change in value per 1.00 (100 percentage points) change in the risk-free rate. 0 at T<=0 or sigma<=0."""
+    kind = _check_kind(kind)
+    if T <= 0 or sigma <= 0:
+        return 0.0
+    _, d2 = _d1_d2(S, K, T, r, q, sigma)
+    disc_r = math.exp(-r * T)
+    return K * T * disc_r * norm.cdf(d2) if kind == CALL else -K * T * disc_r * norm.cdf(-d2)
+
+
 def implied_vol_with_reason(
     market_price: float, S: float, K: float, T: float, r: float, q: float, kind: str,
     lo: float = 1e-4, hi: float = 5.0, tol: float = 1e-8,

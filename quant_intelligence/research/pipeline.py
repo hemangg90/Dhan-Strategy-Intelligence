@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import pandas as pd
 
 from quant_intelligence.backtesting.engine import run_backtest, BacktestResult
+from quant_intelligence.config.settings import SETTINGS
 from quant_intelligence.data.data_manager import DataManager
 from quant_intelligence.data.provenance import build_provenance
 from quant_intelligence.features.feature_engine import compute_features
@@ -108,13 +109,25 @@ def run_pipeline(
     scores: list[StrategyScore] = []
 
     feat_by_ts = features.set_index("timestamp")
+    # ANALOGUE_METHOD=context also compares market-structure features (features/market_structure.py): one causal pass gives every
+    # historical observation its structure state, and today's state joins the query. Off by default.
+    extra_by_ts, query_features = None, market_state.features
+    if SETTINGS.analogue_method == "context":
+        from quant_intelligence.features.market_structure import structure_feature_frame
+
+        try:
+            frame = structure_feature_frame(ohlcv.sort_values("timestamp").reset_index(drop=True))
+            extra_by_ts = frame.set_index("timestamp")
+            query_features = {**market_state.features, **{k: v for k, v in frame.iloc[-1].to_dict().items() if k != "timestamp"}}
+        except Exception as e:
+            log_event("pipeline", f"Structure features unavailable, analogues use the base features only: {e}", level="WARNING")
     for strategy in strategies:
         # persist=False: this runs on every scan/page refresh. Persisting wrote ~700k rows (1.6 GB) and nothing reads
         # them back; the Backtest Lab page still persists its explicit runs.
         backtest = run_backtest(strategy, ohlcv, features, instrument, split="RESEARCH", quantity=quantity, persist=False)
         assessment = assess_strategy(
-            strategy.name, backtest.trades, feat_by_ts, market_state.features, quantity,
-            metrics=backtest.metrics, market=market,
+            strategy.name, backtest.trades, feat_by_ts, query_features, quantity,
+            metrics=backtest.metrics, market=market, extra_by_ts=extra_by_ts,
         )
 
         evidence = _strategy_evidence(backtest.trades, quantity, market, regime_series, ohlcv)

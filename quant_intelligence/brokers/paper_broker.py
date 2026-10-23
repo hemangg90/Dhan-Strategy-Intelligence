@@ -84,6 +84,7 @@ class PaperBroker(BaseBroker):
             "expected_r": order.expected_r,
             "confidence": order.confidence,
             "regime": order.regime,
+            "entry_greeks": order.entry_greeks,
         }
 
         ack = self._record(order, order_id, "FILLED", None, fill_price=simulated_fill_price)

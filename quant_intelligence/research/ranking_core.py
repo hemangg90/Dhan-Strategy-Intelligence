@@ -36,12 +36,15 @@ class Assessment:
 
 
 def observations_from_trades(
-    trades, feat_by_ts: pd.DataFrame, strategy_name: str, quantity: int, market: str = "NSE"
+    trades, feat_by_ts: pd.DataFrame, strategy_name: str, quantity: int, market: str = "NSE",
+    extra_by_ts: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Flatten each trade's entry-time features + outcome into one row per historical
     observation (the analogue engine's input). `feat_by_ts` is features.set_index("timestamp").
     `r_multiple` is NET of costs - what the strategy actually earns - with the gross value kept
-    in `gross_r_multiple`."""
+    in `gross_r_multiple`. `extra_by_ts` (indexed by timestamp, e.g. `structure_feature_frame(...).set_index("timestamp")`) adds
+    more entry-time columns. Each row carries three separate times: `feature_timestamp` (the bar the features describe),
+    `event_timestamp` (the bar the setup fired) and `outcome_available_at` (the bar the result became known)."""
     rows = []
     for t in trades:
         if t.setup.timestamp not in feat_by_ts.index:
@@ -53,6 +56,11 @@ def observations_from_trades(
         row["outcome"] = t.outcome
         row["entry_timestamp"] = t.setup.timestamp
         row["exit_timestamp"] = getattr(t, "exit_timestamp", None)
+        row["feature_timestamp"] = t.setup.timestamp
+        row["event_timestamp"] = t.setup.timestamp
+        row["outcome_available_at"] = row["exit_timestamp"]
+        if extra_by_ts is not None and t.setup.timestamp in extra_by_ts.index:
+            row.update(extra_by_ts.loc[t.setup.timestamp].to_dict())
         row["strategy_name"] = strategy_name
         rows.append(row)
     return pd.DataFrame(rows)
@@ -129,7 +137,8 @@ def assess_strategy(
     top_k: int = 30,
     market: str = "NSE",
     config=None,
+    extra_by_ts: pd.DataFrame | None = None,
 ) -> Assessment:
-    observations = observations_from_trades(trades, feat_by_ts, strategy_name, quantity, market)
+    observations = observations_from_trades(trades, feat_by_ts, strategy_name, quantity, market, extra_by_ts=extra_by_ts)
     metrics = metrics if metrics is not None else _compute_run_metrics(list(trades), quantity, market)
     return assess_observations(strategy_name, observations, current_features, metrics, top_k=top_k, config=config)

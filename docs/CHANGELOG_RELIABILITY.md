@@ -97,3 +97,21 @@ Newest first. "Compat" notes anything that changes behaviour or stored data. Tes
 ## Separate NSE and MCX accounts (2026-10-21)
 * NSE and MCX each have their own paper account, risk limits, drawdown and kill switch (`MCX_ENGINE`, `SETTINGS.risk_mcx`, `AccountState.market`); separate Risk Control pages for each. See `RISK_CONTROLS.md`.
 * Open-position views, manual exit, square-off, the end-of-day job and the Candidate risk preview now use the account of the instrument's own market.
+
+## Chain-scored option contract (2026-10-23)
+* The auto-trader and the paper ticket pick the strike from the live chain (liquidity, spread, delta, OI build-up, OI walls, IV) instead of a fixed offset; untradeable chains place no order. See `OPTION_SELECTION.md`. `OPTION_SELECTION=OFFSET` restores the fixed strike (`BEST` selects the separate strike ranker).
+
+## Market and options intelligence pipeline (2026-10-23)
+* New typed `MarketContext` and `OptionsContext` with a shared data status; market structure (BOS/MSS, displacement, fair value
+  gaps) and liquidity zones/events with confirmation times; reactions, recency and consolidation on levels; session VWAP and an
+  approximate volume profile; Greeks computed by the application (BSM / Black-76); recorded IV history with rank and percentile;
+  OI/PCR features; execution quality (conservative fills, costs); expiry intelligence.
+* A setup-validation stage before contract selection; a staged contract selector with scenario analysis and NO SUITABLE CONTRACT;
+  contracts priced at the executable side.
+* Risk engine: option quote freshness and spread limits, premium at risk, per-underlying concentration, Greek exposure, expiry and
+  order-size limits (fail closed); pre-order reconciliation of the paper book. See `docs/RISK_CONTROLS.md`.
+* Analogues: explicit outcome-availability times, refusal of an unverifiable `as_of`, optional structure/options features,
+  redundancy control, explanations. Ranking evidence report; A-vs-B selector comparison. New pages: Levels & Structure and
+  Chain, Selector & Risk. See `docs/INTELLIGENCE_ARCHITECTURE.md` for what is complete, partial and missing.
+* Behaviour changes to know about: `OPTION_SELECTION` now defaults to `SCORED`; the risk engine now checks an option's spread and
+  quote age (previously only when a quote happened to be supplied) and refuses a new long option within 0.25 trading day of expiry.

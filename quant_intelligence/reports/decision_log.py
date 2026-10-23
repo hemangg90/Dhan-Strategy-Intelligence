@@ -60,6 +60,14 @@ def classify_cycle(output, result) -> dict:
         status, code = "VETOED", _veto_class(reason)
     elif reason.startswith("Direction filtered"):
         status, code = "SKIPPED", "DIRECTION_FILTER"  # a setup fired against the heatmap mover's direction
+    elif reason.startswith("LEVEL CHECK"):
+        status, code = "SKIPPED", "NO_ROOM"  # a setup fired but the next support/resistance level leaves no room to run
+    elif reason.startswith("SETUP VALIDATION"):
+        # "SETUP VALIDATION [CODE]: ..." - the validation stage stopped the trade; the bracketed code is the reason class
+        code = reason.split("[", 1)[1].split("]", 1)[0] if "[" in reason else "VALIDATION"
+        status = "WAITING" if code in ("SETUP_NOT_ACTIVE", "SETUP_EXPIRED") else "SKIPPED"
+    elif reason.startswith("RECONCILIATION"):
+        status, code = "SKIPPED", "RECONCILIATION"
     elif reason.startswith("NO SIZE"):
         status, code = "TRIGGERED", "NO_SIZE"  # a setup fired but one lot is above the per-trade loss budget
     elif result.setup_status == "CHAIN_ERROR":

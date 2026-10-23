@@ -54,6 +54,21 @@ def render_risk_control(market: str) -> None:
     if multiplier < 1:
         st.warning(f"New {market} trades are sized at {multiplier:.0%} of normal: {why}.")
 
+    ex = account.option_exposure or {}
+    if ex.get("n_option_positions"):
+        st.markdown("**Open option exposure** (from the Greeks stored when each position opened; not re-marked)")
+        e1, e2, e3, e4, e5 = st.columns(5)
+        eq = account.equity or 1.0
+        e1.metric("Premium at risk", f"₹{ex['premium_at_risk']:,.0f}", help=f"{ex['premium_at_risk'] / eq * 100:.1f}% of equity; limit {limits.max_premium_at_risk_pct:g}%")
+        e2.metric("Net delta notional", f"₹{ex['delta_notional']:,.0f}", help=f"{abs(ex['delta_notional']) / eq * 100:.0f}% of equity; limit {limits.max_net_delta_pct:g}%")
+        e3.metric("Vega (₹ per vol pt)", f"₹{ex['vega']:,.0f}", help=f"{abs(ex['vega']) / eq * 100:.2f}% of equity; limit {limits.max_vega_pct:g}%")
+        e4.metric("Theta (₹ per day)", f"₹{ex['theta']:,.0f}", help=f"{abs(ex['theta']) / eq * 100:.2f}% of equity; limit {limits.max_theta_pct:g}%")
+        e5.metric("Positions without Greeks", ex["unknown_positions"], help="While any is open and a Greek limit is on, new option trades are refused.")
+    from quant_intelligence.brokers.reconciliation import reconcile_paper
+
+    recon = reconcile_paper(engine.broker)
+    (st.success if recon.ok else st.error)("Reconciliation: " + recon.summary)
+
     st.subheader(f"{market} risk limits")
     if SETTINGS.demo_lockdown:
         st.info("Demo lockdown is on: limits are shown but cannot be changed here.")

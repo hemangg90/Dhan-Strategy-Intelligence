@@ -13,6 +13,7 @@ top_bid_price, top_ask_price, greeks: {delta, gamma, theta, vega}.
 """
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass, field
 
 CHAIN_FIELD_DEFINITIONS: dict[str, str] = {
@@ -44,13 +45,24 @@ class StrikeRow:
     pe_iv: float | None
     pe_delta: float | None
     pe_security_id: str | None
-    # Quote depth and decay, used by options/strike_ranker.py. Optional so a chain without them still parses.
+    # Quote depth and prior close, used by the contract scorer (options/contract_scoring.py); optional so older fixtures still build.
     ce_bid: float | None = None
     ce_ask: float | None = None
-    ce_theta: float | None = None
+    ce_prev_close: float | None = None
     pe_bid: float | None = None
     pe_ask: float | None = None
+    pe_prev_close: float | None = None
+    ce_bid_qty: float | None = None
+    ce_ask_qty: float | None = None
+    pe_bid_qty: float | None = None
+    pe_ask_qty: float | None = None
+    # Provider Greeks beyond delta (per the broker's own definitions; the application recomputes its own in options/greeks.py)
+    ce_gamma: float | None = None
+    ce_theta: float | None = None
+    ce_vega: float | None = None
+    pe_gamma: float | None = None
     pe_theta: float | None = None
+    pe_vega: float | None = None
 
     @property
     def pcr_at_strike(self) -> float | None:
@@ -65,6 +77,11 @@ class ChainSnapshot:
     expiry: str
     spot_price: float
     strikes: list[StrikeRow] = field(default_factory=list)
+    # Snapshot metadata. The chain carries no per-contract quote time, so freshness is the age of the whole snapshot.
+    fetched_at: dt.datetime | None = None  # naive IST time the snapshot was taken from the broker
+    lot_size: int | None = None
+    exchange_segment: str | None = None
+    source: str = "dhan"
 
     @property
     def atm_strike(self) -> float | None:
@@ -174,9 +191,6 @@ def parse_option_chain(underlying: str, expiry: str, raw_response: dict) -> Chai
                 ce_iv=ce.get("implied_volatility"),
                 ce_delta=(ce.get("greeks") or {}).get("delta"),
                 ce_security_id=ce.get("security_id"),
-                ce_bid=ce.get("top_bid_price"),
-                ce_ask=ce.get("top_ask_price"),
-                ce_theta=(ce.get("greeks") or {}).get("theta"),
                 pe_ltp=pe.get("last_price"),
                 pe_oi=pe.get("oi"),
                 pe_oi_change=_oi_change(pe),
@@ -184,9 +198,22 @@ def parse_option_chain(underlying: str, expiry: str, raw_response: dict) -> Chai
                 pe_iv=pe.get("implied_volatility"),
                 pe_delta=(pe.get("greeks") or {}).get("delta"),
                 pe_security_id=pe.get("security_id"),
+                ce_bid=ce.get("top_bid_price"),
+                ce_ask=ce.get("top_ask_price"),
+                ce_prev_close=ce.get("previous_close_price"),
                 pe_bid=pe.get("top_bid_price"),
                 pe_ask=pe.get("top_ask_price"),
+                pe_prev_close=pe.get("previous_close_price"),
+                ce_bid_qty=ce.get("top_bid_quantity"),
+                ce_ask_qty=ce.get("top_ask_quantity"),
+                pe_bid_qty=pe.get("top_bid_quantity"),
+                pe_ask_qty=pe.get("top_ask_quantity"),
+                ce_gamma=(ce.get("greeks") or {}).get("gamma"),
+                ce_theta=(ce.get("greeks") or {}).get("theta"),
+                ce_vega=(ce.get("greeks") or {}).get("vega"),
+                pe_gamma=(pe.get("greeks") or {}).get("gamma"),
                 pe_theta=(pe.get("greeks") or {}).get("theta"),
+                pe_vega=(pe.get("greeks") or {}).get("vega"),
             )
         )
     strikes.sort(key=lambda s: s.strike)

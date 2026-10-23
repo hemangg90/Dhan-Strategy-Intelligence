@@ -28,10 +28,12 @@ page_header(
     "Every strike of the live chain scored on delta, bid-ask spread, liquidity and time decay. A heuristic ranking, "
     "not a prediction: it has not been shown to beat the plain ATM pick.",
 )
-mode_chip = chip(f"Trading pages use: {SETTINGS.option_selection}", "info" if SETTINGS.option_selection == "BEST" else "muted", icon="")
+mode_chip = chip(f"Trading pages use: {SETTINGS.option_selection}", "info" if SETTINGS.option_selection in ("BEST", "SCORED") else "muted", icon="")
 st.markdown(mode_chip, unsafe_allow_html=True)
-if SETTINGS.option_selection != "BEST":
-    st.caption("Trading pages still pick ATM +/- the offset. Set OPTION_SELECTION=BEST in .env to let them use the top strike below.")
+if SETTINGS.option_selection == "OFFSET":
+    st.caption("Trading pages pick ATM +/- the offset. Set OPTION_SELECTION=BEST (this ranking) or SCORED (chain score with OI build-up) in .env to use a chain pick.")
+elif SETTINGS.option_selection == "SCORED":
+    st.caption("Trading pages use the SCORED pick (options/contract_scoring.py). The table below is the separate BEST ranking, shown for comparison.")
 
 client = st.session_state["dhan_api_client"]
 if not client.is_configured():

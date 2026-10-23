@@ -123,8 +123,8 @@ if chain is None or chain.underlying != underlying:
     st.stop()
 
 moneyness_offset = st.slider("Moneyness offset (0 = ATM, + = further OTM)", 0, 5, SETTINGS.option_moneyness_offset,
-                             disabled=SETTINGS.option_selection == "BEST",
-                             help="Ignored while OPTION_SELECTION=BEST: the strike is the top-ranked one (Option Chain page).")
+                             disabled=SETTINGS.option_selection != "OFFSET",
+                             help="Used only with OPTION_SELECTION=OFFSET; BEST and SCORED pick the strike from the chain.")
 try:
     lot_size = get_underlying_info(underlying)["lot_size"]
     contract = choose_contract(chain, setup.direction, transaction, moneyness_offset, lot_size)

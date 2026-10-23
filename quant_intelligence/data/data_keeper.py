@@ -48,6 +48,9 @@ class DataKeeper:
 
         from quant_intelligence.reports.eod_job import EodJob
 
+        from quant_intelligence.options.iv_recorder import IvRecorder
+
+        self.iv_recorder = IvRecorder()  # reads index option chains during the session so IV rank/percentile can exist (IV_RECORDER)
         self.eod_job = EodJob()  # daily report after each close (EOD_REPORT); works without a token
         self.vol_job = VolJob()  # once-a-day volatility models (VOL_MODELS_ENABLED); never runs in a scan cycle
         self.paused = False  # True while the token is unusable: no requests are sent until a valid one appears
@@ -94,6 +97,10 @@ class DataKeeper:
             except Exception as e:  # a failed report must never disturb the candle refresh
                 log_event("data_keeper", f"EOD job failed: {e}", level="ERROR")
             if not self.paused:
+                try:
+                    self.iv_recorder.run_round(list(SETTINGS.option_underlyings), self._stop)
+                except Exception as e:  # failure-isolated: IV recording must never disturb the candle refresh
+                    log_event("data_keeper", f"IV recorder failed: {e}", level="ERROR")
                 try:
                     self.vol_job.run_round(watchlist_symbols(), self._stop)
                 except Exception as e:  # failure-isolated: models must never disturb the candle refresh

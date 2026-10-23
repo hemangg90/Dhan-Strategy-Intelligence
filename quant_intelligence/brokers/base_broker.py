@@ -38,6 +38,7 @@ class OrderRequest:
     expected_r: float | None = None
     confidence: str | None = None
     regime: str | None = None
+    entry_greeks: dict | None = None  # per-unit Greeks + spot at entry, for the risk engine's portfolio exposure
 
 
 @dataclass

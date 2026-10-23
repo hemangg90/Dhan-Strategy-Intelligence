@@ -51,7 +51,24 @@ ROBUST_FEATURES = [
     "or_position",
     "prev_day_range_pos",
 ]
+# Underlying-structure features (features/market_structure.py `structure_feature_frame`, causal per bar) and options
+# features (a live OptionsContext). They are only used when BOTH the observations and the current state carry them: the
+# application keeps no historical option chains, so options features are normally missing from the history and drop out
+# automatically (reported in `features_unavailable`) rather than being filled in.
+STRUCTURE_FEATURES = [
+    "structure_trend_code",
+    "dist_swing_high_atr",
+    "dist_swing_low_atr",
+    "bars_since_structure_event",
+    "last_event_is_mss",
+]
+OPTIONS_FEATURES = ["iv_rank", "atm_iv", "iv_minus_rv", "pcr_oi", "pcr_oi_window", "atm_spread_pct", "dte_trading_days"]
 CONTEXT_COLUMNS = ["time_since_open_min"]
+# Timestamps every observation can carry, kept distinct on purpose:
+#   feature_timestamp      the bar whose features describe the situation
+#   event_timestamp        the bar the setup fired (entry)
+#   outcome_available_at   the bar at which the trade's result became known (its exit)
+TIME_COLUMNS = ["feature_timestamp", "event_timestamp", "outcome_available_at"]
 # Everything an observation row must carry for either method.
 ALL_FEATURES = list(dict.fromkeys(COMPARISON_FEATURES + ROBUST_FEATURES + CONTEXT_COLUMNS))
 
@@ -79,6 +96,13 @@ class AnalogueConfig:
     phase_window_min: float | None = None  # restrict to similar time of day (minutes since open) when enough remain
     min_after_phase: int = 20
     test_information: bool = False
+    # Optional structural eligibility: observation columns that must EQUAL the current value (e.g. "regime_label").
+    # Skipped, and reported, when fewer than `min_after_match` observations remain.
+    match_columns: tuple = ()
+    min_after_match: int = 20
+    # Optional redundancy control: a feature correlated (|r| >= this) with k others gets weight 1/(k+1), so a cluster of
+    # near-duplicate features counts about once. None = off (the legacy and robust methods are unchanged).
+    correlation_threshold: float | None = None
 
 
 LEGACY = AnalogueConfig()
@@ -92,7 +116,18 @@ ROBUST = AnalogueConfig(
     phase_window_min=90.0,
     test_information=True,
 )
-CONFIGS = {"legacy": LEGACY, "robust": ROBUST}
+CONTEXT = AnalogueConfig(
+    name="context",
+    features=tuple(dict.fromkeys(ROBUST_FEATURES + STRUCTURE_FEATURES + OPTIONS_FEATURES)),
+    scaling="robust",
+    max_per_day=2,
+    cutoff_quantile=0.30,
+    kernel=True,
+    phase_window_min=90.0,
+    test_information=True,
+    correlation_threshold=0.8,
+)
+CONFIGS = {"legacy": LEGACY, "robust": ROBUST, "context": CONTEXT}
 
 
 def default_config() -> AnalogueConfig:
@@ -141,7 +176,16 @@ class AnalogueIndex:
         Z, zq = (M - center) / scale, (q - center) / scale
         if cfg.scaling == "robust":
             Z, zq = np.clip(Z, -CLIP_Z, CLIP_Z), np.clip(zq, -CLIP_Z, CLIP_Z)
-        w = np.sqrt(np.array([float(cfg.weights.get(c, 1.0)) for c in cols]))
+        weights = np.array([float(cfg.weights.get(c, 1.0)) for c in cols])
+        self.redundancy = {}
+        if cfg.correlation_threshold is not None and len(cols) > 1:
+            corr = np.corrcoef(Z.T)
+            corr = np.nan_to_num(corr, nan=0.0)
+            crowd = (np.abs(corr) >= cfg.correlation_threshold).sum(axis=1) - 1  # others strongly tied to this feature
+            weights = weights / (1.0 + crowd)
+            self.redundancy = {c: int(k) for c, k in zip(cols, crowd) if k > 0}
+        self.weights = dict(zip(cols, weights))
+        w = np.sqrt(weights)
         Z, zq = Z * w, zq * w
         if cfg.distance == "mahalanobis" and len(cols) > 1 and len(Z) > len(cols) + 2:
             cov = np.atleast_2d(np.cov(Z.T))
@@ -155,6 +199,8 @@ class AnalogueIndex:
         self.minutes = (pd.to_numeric(observations["time_since_open_min"], errors="coerce").to_numpy(dtype=float)
                         if "time_since_open_min" in observations.columns else None)
         self.cutoff = self._pairwise_cutoff() if cfg.cutoff_quantile else None
+        self.match_dropped: list[str] = []
+        self.current = current
 
     def _pairwise_cutoff(self) -> float | None:
         n = len(self.Z)
@@ -178,6 +224,15 @@ class AnalogueIndex:
             near = np.abs(self.minutes - minutes_now) <= cfg.phase_window_min  # NaN compares False
             if near.sum() >= cfg.min_after_phase:
                 allowed &= near
+        for col in cfg.match_columns:
+            want = self.current.get(col)
+            if col not in self.obs.columns or want is None or (isinstance(want, float) and not np.isfinite(want)):
+                continue
+            same = (self.obs[col].to_numpy() == want)
+            if (allowed & same).sum() >= cfg.min_after_match:
+                allowed &= same
+            elif col not in self.match_dropped:
+                self.match_dropped.append(col)  # too few like-for-like observations: say so instead of starving the search
         if self.cutoff is not None:
             allowed &= d <= self.cutoff
         if exclude_day is not None:
@@ -214,10 +269,19 @@ def analogue_search(
     if len(observations) == 0:
         return observations.assign(similarity_score=pd.Series(dtype=float)), None
     obs = observations
-    if as_of is not None and "exit_timestamp" in obs.columns:
-        obs = obs[pd.to_datetime(obs["exit_timestamp"]) <= pd.Timestamp(as_of)]
+    excluded_unresolved = 0
+    if as_of is not None:
+        avail = "outcome_available_at" if "outcome_available_at" in obs.columns else "exit_timestamp" if "exit_timestamp" in obs.columns else None
+        if avail is None:
+            # Silently ignoring `as_of` would let a not-yet-known outcome into the decision: refuse instead.
+            raise ValueError("as_of was given but the observations carry no outcome_available_at / exit_timestamp column")
+        known = pd.to_datetime(obs[avail]) <= pd.Timestamp(as_of)  # an unresolved trade (no time) compares False: excluded
+        excluded_unresolved = int((~known).sum())
+        obs = obs[known]
         if len(obs) == 0:
-            return obs.assign(similarity_score=pd.Series(dtype=float)), None
+            empty = obs.assign(similarity_score=pd.Series(dtype=float))
+            empty.attrs.update({"information_cutoff": as_of, "excluded_outcome_not_yet_known": excluded_unresolved})
+            return empty, None
     index = AnalogueIndex(obs, current_features, cfg)
     if not index.valid:  # no feature carries information on both sides
         return obs.head(0).assign(similarity_score=pd.Series(dtype=float)), None
@@ -233,9 +297,36 @@ def analogue_search(
     picked["distance"] = d[pos]
     if cfg.kernel:
         picked["weight"] = index.kernel_weights(d)[pos]
+    wanted = [c for c in cfg.features]
     picked.attrs.update({"method": cfg.name, "features_used": list(index.cols), "cutoff": index.cutoff,
-                         "n_observations": len(obs)})
+                         "n_observations": len(obs),
+                         "features_unavailable": [c for c in wanted if c not in index.cols],
+                         "redundant_features": dict(index.redundancy), "match_filters_dropped": list(index.match_dropped),
+                         "information_cutoff": as_of, "excluded_outcome_not_yet_known": excluded_unresolved,
+                         "positions": pos})
     return picked, index
+
+
+def explain_analogues(picked: pd.DataFrame, index: "AnalogueIndex | None", top: int = 3) -> pd.DataFrame:
+    """Why each analogue was chosen: its distance, the features it matches best and worst (in scaled units, so
+    comparable across features), and the three timestamps. Reads the `positions` the search recorded on `picked`."""
+    cols = ["rank", "distance", "closest_features", "furthest_features", "feature_timestamp", "event_timestamp", "outcome_available_at"]
+    if index is None or len(picked) == 0 or "positions" not in picked.attrs:
+        return pd.DataFrame(columns=cols)
+    rows = []
+    for rank, (pos, (_, rec)) in enumerate(zip(picked.attrs["positions"], picked.iterrows()), start=1):
+        diff = np.abs(index.Z[pos] - index.zq)
+        order = np.argsort(diff, kind="stable")
+        near = [f"{index.cols[j]} ({diff[j]:.2f})" for j in order[:top]]
+        far = [f"{index.cols[j]} ({diff[j]:.2f})" for j in order[::-1][:2]]
+        rows.append({
+            "rank": rank, "distance": float(rec.get("distance", np.nan)), "closest_features": ", ".join(near),
+            "furthest_features": ", ".join(far),
+            "feature_timestamp": rec.get("feature_timestamp", rec.get("entry_timestamp")),
+            "event_timestamp": rec.get("event_timestamp", rec.get("entry_timestamp")),
+            "outcome_available_at": rec.get("outcome_available_at", rec.get("exit_timestamp")),
+        })
+    return pd.DataFrame(rows, columns=cols)
 
 
 def find_analogues(

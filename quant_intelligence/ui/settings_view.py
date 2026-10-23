@@ -35,6 +35,12 @@ def risk_rows(market: str = "NSE") -> list[dict]:
         ("Loss-streak pause", f"{r.loss_streak_pause} losses, {r.loss_streak_pause_min} min", "No new entries after consecutive losers."),
         ("Strategy daily loss stop", f"{r.strategy_max_losses_per_day} losses", "A strategy that lost this many today is done."),
         ("Profit lock", f"at {r.profit_lock_trigger_pct:g}%, give back {r.profit_lock_giveback:.0%}", "Stops trading if a good day is being given back."),
+        ("Option premium at risk", f"{r.max_premium_at_risk_pct:g}% total, {r.max_underlying_premium_pct:g}% per underlying", "Premium paid on open bought options (0 disables)."),
+        ("Option Greek exposure", f"delta {r.max_net_delta_pct:g}%, gamma {r.max_gamma_pct:g}%, vega {r.max_vega_pct:g}%, theta {r.max_theta_pct:g}% of equity",
+         "Measured from Greeks stored at entry; an unknown Greek fails closed when the limit is on."),
+        ("Option expiry and order size", f"{r.min_trading_days_to_expiry:g} trading days minimum, {r.max_order_lots} lots maximum",
+         "No new long option closer to expiry than this; the largest single order."),
+        ("Option quote freshness and spread", f"{SETTINGS.option_max_quote_age_sec:g}s, {SETTINGS.option_max_spread_pct:g}%", "A chain snapshot older than this, or a wider spread, is refused."),
     ]
     from quant_intelligence.risk.limit_overrides import rows as editable_rows
 

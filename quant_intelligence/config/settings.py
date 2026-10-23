@@ -22,6 +22,12 @@ DATA_CACHE_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 
 
+def _selection_env() -> str:
+    """OPTION_SELECTION: OFFSET, BEST or SCORED (default SCORED). An unrecognised value falls back to OFFSET, the plain ATM rule."""
+    raw = os.getenv("OPTION_SELECTION", "SCORED").strip().upper() or "SCORED"
+    return raw if raw in ("OFFSET", "BEST", "SCORED") else "OFFSET"
+
+
 def _bool_env(name: str, default: bool = False) -> bool:
     val = os.getenv(name, "").strip().lower()
     if not val:
@@ -75,6 +81,17 @@ class RiskLimits:
     # group, and at most this much open risk per group as % of equity.
     max_group_positions: int = _int_env("MAX_GROUP_POSITIONS", 2)
     max_group_risk_pct: float = _float_env("MAX_GROUP_RISK_PCT", 2.0)
+    # Option-specific controls (risk/options_risk.py), as % of equity unless stated; 0 disables a limit. Starting points to tune
+    # to the account, not recommendations. Greek limits are measured from the Greeks stored at each position's entry. An enabled
+    # Greek limit makes a trade whose Greeks (or an open position's) are unknown fail closed.
+    max_premium_at_risk_pct: float = _float_env("MAX_PREMIUM_AT_RISK_PCT", 15.0)  # premium paid on all open bought options
+    max_underlying_premium_pct: float = _float_env("MAX_UNDERLYING_PREMIUM_PCT", 8.0)  # ... on one underlying
+    max_net_delta_pct: float = _float_env("MAX_NET_DELTA_PCT", 800.0)  # |net delta x spot x quantity| (option notional is large)
+    max_gamma_pct: float = _float_env("MAX_GAMMA_PCT", 0.0)  # delta-notional that changes for a 1% move; off by default
+    max_vega_pct: float = _float_env("MAX_VEGA_PCT", 2.0)  # net rupees per volatility point
+    max_theta_pct: float = _float_env("MAX_THETA_PCT", 1.0)  # net rupees of decay per trading day
+    min_trading_days_to_expiry: float = _float_env("MIN_TRADING_DAYS_TO_EXPIRY", 0.25)  # no NEW long option closer than this
+    max_order_lots: int = _int_env("MAX_ORDER_LOTS", 100)  # largest single order, in lots (0 disables)
     # After this many consecutive losers today, no new entries for LOSS_STREAK_PAUSE_MIN minutes.
     loss_streak_pause: int = _int_env("LOSS_STREAK_PAUSE", 3)
     loss_streak_pause_min: int = _int_env("LOSS_STREAK_PAUSE_MIN", 60)
@@ -164,9 +181,28 @@ class Settings:
         s.strip().upper() for s in os.getenv("OPTION_UNDERLYINGS", "NIFTY,BANKNIFTY,FINNIFTY,MIDCPNIFTY,SENSEX").split(",") if s.strip()
     )
     option_moneyness_offset: int = _int_env("OPTION_MONEYNESS_OFFSET", 0)  # 0=ATM, +N = N strikes OTM
-    # How the strike is chosen: OFFSET = ATM +/- OPTION_MONEYNESS_OFFSET; BEST = rank the whole chain on delta,
-    # bid-ask spread, liquidity and decay (options/strike_ranker.py). Anything else falls back to OFFSET.
-    option_selection: str = "BEST" if os.getenv("OPTION_SELECTION", "").strip().upper() == "BEST" else "OFFSET"
+    # How the strike is chosen (OPTION_SELECTION): OFFSET = ATM +/- OPTION_MONEYNESS_OFFSET; BEST = rank the chain on
+    # delta, bid-ask spread, liquidity and decay (options/strike_ranker.py); SCORED = chain-scored pick using OI build-up,
+    # liquidity, spread, delta and IV (options/contract_scoring.py). Any other value falls back to OFFSET.
+    option_selection: str = _selection_env()
+    option_window_strikes: int = _int_env("OPTION_WINDOW_STRIKES", 4)  # strikes each side of ATM that are considered
+    option_max_spread_pct: float = _float_env("OPTION_MAX_SPREAD_PCT", 8.0)  # bid/ask spread as % of mid; wider is rejected
+    option_min_oi_vs_median: float = _float_env("OPTION_MIN_OI_VS_MEDIAN", 0.25)  # OI must be at least this share of the chain median
+    option_min_premium: float = _float_env("OPTION_MIN_PREMIUM", 1.0)
+    option_max_quote_age_sec: float = _float_env("OPTION_MAX_QUOTE_AGE_SEC", 120.0)  # chain snapshot age limit (no per-contract quote time)
+    option_min_top_qty_lots: float = _float_env("OPTION_MIN_TOP_QTY_LOTS", 1.0)  # quoted size needed on the side we would trade
+    option_require_quote: bool = _bool_env("OPTION_REQUIRE_QUOTE", True)  # a contract needs a fresh two-sided quote to be eligible
+    iv_recorder_enabled: bool = _bool_env("IV_RECORDER", True)  # the data keeper reads index option chains to build IV history
+    scenario_horizon_bars: int = _int_env("SCENARIO_HORIZON_BARS", 12)  # holding period the contract scenarios assume
+    # Setup validation stage (execution/setup_validation.py) and pre-order reconciliation (brokers/reconciliation.py)
+    setup_validation: bool = _bool_env("SETUP_VALIDATION", True)
+    setup_valid_bars: int = _int_env("SETUP_VALID_BARS", 3)  # a setup older than this many bars has expired
+    setup_max_bar_age_min: float = _float_env("SETUP_MAX_BAR_AGE_MIN", 20.0)  # the last bar must be this recent to enter
+    reconcile_before_order: bool = _bool_env("RECONCILE_BEFORE_ORDER", True)
+    # Support/resistance and liquidity-level check on every entry (features/levels.py)
+    levels_enabled: bool = _bool_env("LEVELS_ENABLED", False)  # opt-in: on 2 months of NIFTY/BANKNIFTY history it vetoed 82% of setups with no benefit
+    levels_min_room_mult: float = _float_env("LEVELS_MIN_ROOM_MULT", 1.5)  # next level against the trade must be this many stop-distances away
+    levels_buffer_atr: float = _float_env("LEVELS_BUFFER_ATR", 0.15)  # stops/targets sit this far (in ATR) beyond/short of a level
     option_expiry_preference: str = os.getenv("OPTION_EXPIRY_PREFERENCE", "NEAREST").strip().upper()
     option_product_type: str = os.getenv("OPTION_PRODUCT_TYPE", "INTRADAY").strip().upper()
 

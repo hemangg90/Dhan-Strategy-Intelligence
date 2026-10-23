@@ -63,6 +63,8 @@ class AccountState:
     daily_pnl_known: bool = True
     # Which market's account this is ("NSE" or "MCX"). It selects the limit set the checks and the sizing use.
     market: str = "NSE"
+    # Open option exposure (risk/options_risk.exposure_from_positions): premium at risk, Greeks, positions with unknown Greeks.
+    option_exposure: dict = field(default_factory=dict)
 
 
 def limits_for(market: str | None):
@@ -90,6 +92,9 @@ class ProposedTrade:
     # True when the prices are an option PREMIUM that is being bought (a SHORT underlying view buys a put),
     # so stop/target geometry is validated as long even though `direction` describes the underlying.
     long_premium: bool = False
+    # Option details for the option-specific checks: {"underlying", "transaction", "greeks" (per unit + spot, or None when
+    # unavailable), "trading_days_to_expiry"}. None = not an option trade (those checks are skipped).
+    option: dict | None = None
 
 
 # Deterministic order-time limits, independent of the ranker's own data-quality verdict.
@@ -291,14 +296,19 @@ def _evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetim
     if trade.data_quality_status != "OK":
         return _veto(decision_id, f"Data quality is {trade.data_quality_status} - trade blocked", checks)
 
+    # An option's quote is a chain snapshot, held to the (much shorter) option limit; other prices are a bar's close.
+    max_age = SETTINGS.option_max_quote_age_sec if trade.option is not None else MAX_QUOTE_AGE_SEC
+    if trade.option is not None and trade.quote_time is None:
+        return _veto(decision_id, "Option quote time unknown: freshness cannot be verified", checks)
     if trade.quote_time is not None:
         age = _age_seconds(trade.quote_time, now)
-        checks["quote_fresh"] = age is not None and 0 <= age <= MAX_QUOTE_AGE_SEC
+        checks["quote_fresh"] = age is not None and 0 <= age <= max_age
         if not checks["quote_fresh"]:
-            shown = "unknown" if age is None else f"{age / 60:.1f} min"
-            return _veto(decision_id, f"Price is stale (age {shown}, max {MAX_QUOTE_AGE_SEC // 60} min)", checks)
+            shown = "unknown" if age is None else (f"{age:.0f}s" if trade.option is not None else f"{age / 60:.1f} min")
+            limit = f"{max_age:g}s" if trade.option is not None else f"{MAX_QUOTE_AGE_SEC // 60} min"
+            return _veto(decision_id, f"Price is stale (age {shown}, max {limit})", checks)
 
-    if trade.bid is not None or trade.ask is not None:
+    if trade.bid is not None or trade.ask is not None or trade.option is not None:
         spread_problem = _spread_slippage_reason(trade)
         checks["spread_and_slippage_acceptable"] = spread_problem is None
         if spread_problem:
@@ -415,6 +425,16 @@ def _evaluate_trade(account: AccountState, trade: ProposedTrade, now: dt.datetim
                 checks,
             )
 
+    if trade.option is not None:
+        from quant_intelligence.risk.options_risk import check_option_trade
+
+        option_checks, option_problem = check_option_trade(
+            account.option_exposure, trade.option, trade.quantity, trade.entry_price,
+            trade.option.get("transaction") or "BUY", account.equity, limits, trade.lot_size)
+        checks.update(option_checks)
+        if option_problem:
+            return _veto(decision_id, option_problem, checks)
+
     min_liquidity = 0.3
     checks["liquidity_sufficient"] = trade.relative_volume is None or trade.relative_volume >= min_liquidity
     if not checks["liquidity_sufficient"]:
@@ -475,8 +495,9 @@ def _spread_slippage_reason(trade: ProposedTrade) -> str | None:
         return f"Crossed quote (bid {bid:g} > ask {ask:g}) - cannot trust price"
     spread = ask - bid
     spread_pct = spread / ((ask + bid) / 2) * 100
-    if spread_pct > MAX_SPREAD_PCT:
-        return f"Spread {spread_pct:.2f}% exceeds max {MAX_SPREAD_PCT:g}%"
+    max_spread = SETTINGS.option_max_spread_pct if trade.option is not None else MAX_SPREAD_PCT
+    if spread_pct > max_spread:
+        return f"Spread {spread_pct:.2f}% exceeds max {max_spread:g}%"
     stop_distance = abs(trade.entry_price - trade.stop_price)
     if spread / 2 > MAX_SLIPPAGE_STOP_FRACTION * stop_distance:
         return (

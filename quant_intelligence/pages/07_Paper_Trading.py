@@ -22,6 +22,7 @@ from quant_intelligence.execution.capital import capital_summary
 from quant_intelligence.execution.engine import ENGINE
 from quant_intelligence.execution.position_monitor import monitor_option_positions, monitor_positions
 from quant_intelligence.execution.setup_detector import SETUP_TRIGGERED, WAITING_FOR_SETUP, detect_chain_setup, detect_setup
+from quant_intelligence.options.contract_scoring import select_best_contract as select_scored_contract
 from quant_intelligence.options.option_selector import (
     OptionSelectionError,
     fetch_chain,
@@ -267,16 +268,35 @@ with side:
             if chain is None:
                 st.warning("Load the option chain (Option chain tab) to resolve a tradeable contract.")
             else:
+                modes = {"SCORED": "Best by chain score (OI build-up, spread, delta, IV)", "BEST": "Best by ranking (delta, spread, liquidity, decay)",
+                         "OFFSET": "Fixed offset from ATM"}
+                mode = st.radio("Strike choice", list(modes), format_func=modes.get, horizontal=True, key="pt_mode",
+                                index=list(modes).index(SETTINGS.option_selection) if SETTINGS.option_selection in modes else 2)
                 moneyness = st.slider("Strike offset (0 = ATM, + = further OTM)", 0, 5, SETTINGS.option_moneyness_offset, key="pt_money",
-                                      disabled=SETTINGS.option_selection == "BEST",
-                                      help="Ignored while OPTION_SELECTION=BEST: the strike is the top-ranked one (Option Chain page).")
+                                      disabled=mode != "OFFSET", help="Used only with the fixed offset.")
+                choice = None
                 try:
                     lot_size = get_underlying_info(underlying)["lot_size"]
-                    contract = choose_contract(chain, setup.direction, transaction, moneyness, lot_size)
+                    if mode == "SCORED":
+                        choice = select_scored_contract(chain, setup.direction, transaction, lot_size)
+                        contract = choice.contract
+                    else:
+                        contract = choose_contract(chain, setup.direction, transaction, moneyness, lot_size, mode=mode)
                     premium_setup = translate_setup(setup, contract)
                 except (OptionSelectionError, PremiumSizingError) as e:
                     st.error(f"Could not resolve a tradeable option: {e}")
                 else:
+                    if choice is not None:
+                        st.caption(choice.summary)
+                        with st.expander("Why this strike - every strike scored"):
+                            st.dataframe(pd.DataFrame([{
+                                "Strike": r.strike, "Score": round(r.score, 1), "OI build-up": r.buildup.replace("_", " ").title(),
+                                "Spread %": None if r.spread_pct is None else round(r.spread_pct, 1),
+                                "Delta": None if r.delta is None else round(abs(r.delta), 2), "OI": r.oi, "Volume": r.volume,
+                                **{k.title(): round(v, 2) for k, v in r.parts.items()}} for r in choice.ranking]),
+                                width="stretch", hide_index=True)
+                            if choice.rejected:
+                                st.caption("Rejected: " + "; ".join(f"{k:g} ({why})" for k, why in choice.rejected))
                     lots = st.number_input("Lots", min_value=1, value=1, step=1, key="pt_lots")
                     quantity = int(lots) * contract.lot_size
                     market = profile_for(underlying).name

@@ -109,7 +109,7 @@ promise of profit** (read [Known limitations](#known-limitations-read-this-befor
    bar (some strategies also need the live option chain).
 4. **Resolve a contract.** The live Dhan option chain is fetched; the option selector maps
    LONG -> call, SHORT -> put (BUY) or the mirrored SELL leg, picks the strike (ATM by default,
-   configurable moneyness offset; or the top-ranked strike with `OPTION_SELECTION=BEST`) and expiry (nearest by default).
+   configurable moneyness offset; the chain-scored pick with `OPTION_SELECTION=SCORED` (the default) or the top-ranked strike with `OPTION_SELECTION=BEST`) and expiry (nearest by default).
 5. **Translate to premium.** The underlying's stop/target distance is scaled by the option's live
    delta into a premium stop/target. A SELL *requires* a valid premium stop (unbounded risk otherwise).
 6. **Size.** Quantity (whole lots) is the smaller of a risk-based size (90% of the max risk per trade)
@@ -233,7 +233,25 @@ banner on the NSE/MCX panels naming the reason, and a table with a **Refresh can
 last result was not OK for a minute, or when a new bar has closed - saving a new token clears stale results
 immediately. Candle files are written atomically and per instrument one fetch runs at a time, so the keeper and the pages never corrupt or duplicate each other's downloads. Disable with `DATA_KEEPER=false`.
 
+### Market and options intelligence
+
+The decision path is: market data -> `MarketContext` (regime, trend, volatility, VWAP, support/resistance, liquidity zones and events,
+BOS/MSS, fair value gaps) and `OptionsContext` (chain, IV rank and percentile, Greeks, open interest and PCR, spread and liquidity,
+expiry) -> historical analogues -> strategy ranking -> **setup validation** (an active, fresh, tradeable setup with room to run) ->
+**contract selection** (eligibility, quality score, scenario analysis, ranking) -> the independent **risk engine** (including
+option-specific limits) -> a paper order. Two pages show it: **Levels & Structure** and **Chain, Selector & Risk**.
+
+What is real and what is not: Greeks are computed by the application (European model, trading-time clock, IV solved from each
+contract's price); IV rank and percentile need a recorded IV history, which the app builds from live chain snapshots (the data
+keeper reads the index chains during the session) and which is *unavailable* until about 30 sessions exist; there is no historical
+option-chain data, so analogues and rankings are built from the underlying and the options-aware selectors cannot be back-tested.
+See `docs/INTELLIGENCE_ARCHITECTURE.md` (the implementation map, what is complete, partial and missing), `docs/OPTION_SELECTION.md`
+and `docs/RISK_CONTROLS.md`.
+
 ### Best-strike selection (Option Chain page)
+
+`OPTION_SELECTION` chooses how the strike is picked: `SCORED` (default, see `docs/OPTION_SELECTION.md`), `BEST` (below) or
+`OFFSET` (ATM plus `OPTION_MONEYNESS_OFFSET`). The rest of this section describes `BEST`.
 
 By default the strike is ATM plus `OPTION_MONEYNESS_OFFSET`. The **Option Chain** page (Strategy Intelligence) ranks
 every strike of the live chain for the chosen side and action, and `OPTION_SELECTION=BEST` makes the auto-traders and
@@ -245,7 +263,7 @@ per-trade capital cap is also dropped. The rest are **scored** 0-100: 35% how cl
 0.20 written), 25% spread tightness, 25% open interest and volume relative to the busiest strike on that side, and 15% time
 decay (|theta|/premium per day: low is better when buying, high when writing). A missing input scores a neutral 50 and is
 noted in the table, never guessed. The weights and bands are heuristics, not a fitted model, and nothing shows the ranking
-beats plain ATM: compare on paper before relying on it. Leave `OPTION_SELECTION` unset to keep the ATM rule.
+beats plain ATM: compare on paper before relying on it. Set `OPTION_SELECTION=OFFSET` to keep the plain ATM rule.
 
 ### Token lifecycle (token keeper)
 
@@ -513,7 +531,14 @@ SQLite even with no `.env`.
 | `DHAN_BASE_URL` | `https://api.dhan.co/v2` | Dhan API base URL. |
 | `OPTION_UNDERLYINGS` | `NIFTY,BANKNIFTY,FINNIFTY,MIDCPNIFTY,SENSEX` | Index underlyings scanned. |
 | `OPTION_MONEYNESS_OFFSET` | `0` | 0 = ATM; +N = N strikes further OTM. |
-| `OPTION_SELECTION` | `OFFSET` | `OFFSET` = ATM +/- the offset above. `BEST` = rank every strike of the live chain (delta, bid-ask spread, open interest/volume, time decay; a bought option must also fit the per-trade capital cap) and trade the top one. Heuristic, not shown to beat ATM; see *Best-strike selection*. |
+| `OPTION_SELECTION` | `SCORED` | `SCORED` = chain-scored pick: liquidity, spread, delta, OI build-up, IV, then scenario analysis (`docs/OPTION_SELECTION.md`). `BEST` = rank every strike on delta, spread, liquidity and decay and trade the top one. `OFFSET` = ATM +/- the offset above. None is shown to beat the others. |
+| `OPTION_MAX_SPREAD_PCT`, `OPTION_MAX_QUOTE_AGE_SEC`, `OPTION_MIN_TOP_QTY_LOTS`, `OPTION_REQUIRE_QUOTE` | `8`, `120`, `1`, `1` | Contract eligibility and the risk engine's option quote limits: spread (% of mid), snapshot age, quoted size, and whether a fresh two-sided quote is required. |
+| `OPTION_WINDOW_STRIKES`, `OPTION_MIN_PREMIUM`, `OPTION_MIN_OI_VS_MEDIAN` | `4`, `1`, `0.25` | Strikes considered either side of ATM; minimum premium; minimum open interest relative to the chain median. |
+| `SETUP_VALIDATION`, `SETUP_VALID_BARS`, `SETUP_MAX_BAR_AGE_MIN` | `1`, `3`, `20` | The setup-validation stage: on/off, bars a setup stays valid, how recent the last bar must be. |
+| `LEVELS_ENABLED`, `LEVELS_MIN_ROOM_MULT`, `LEVELS_BUFFER_ATR` | `0`, `1.5`, `0.15` | Opt-in support/resistance and liquidity-level check: room to the next significant level in stop distances, and the buffer in ATR. Off by default: replayed on about two months of cached NIFTY and BANKNIFTY candles it vetoed 82% of setups and the vetoed trades were not worse than the kept ones. |
+| `MAX_PREMIUM_AT_RISK_PCT`, `MAX_UNDERLYING_PREMIUM_PCT`, `MAX_NET_DELTA_PCT`, `MAX_GAMMA_PCT`, `MAX_VEGA_PCT`, `MAX_THETA_PCT`, `MIN_TRADING_DAYS_TO_EXPIRY`, `MAX_ORDER_LOTS` | `15`, `8`, `800`, `0`, `2`, `1`, `0.25`, `100` | Option-specific risk limits (percent of equity; `0` = off). See `docs/RISK_CONTROLS.md`. |
+| `RECONCILE_BEFORE_ORDER`, `IV_RECORDER`, `SCENARIO_HORIZON_BARS` | `1`, `1`, `12` | Check the book against saved positions before each paper order; let the data keeper read index chains to build IV history; holding horizon of the contract scenarios. |
+| `ANALOGUE_METHOD` | `legacy` | `legacy`, `robust` or `context` (adds market-structure features to the analogue comparison). |
 | `OPTION_EXPIRY_PREFERENCE` | `NEAREST` | `NEAREST` or `NEAREST_MONTHLY`. |
 | `OPTION_PRODUCT_TYPE` | `INTRADAY` | `INTRADAY`, `MARGIN` or `CNC` (order product type). |
 | `DEFAULT_INSTRUMENT`, `DEFAULT_TIMEFRAME` | `NIFTY`, `5min` | Dashboard defaults. |
@@ -687,7 +712,7 @@ left open when the app slept (STALE) have no result and are reported separately.
 
 ```bash
 pip install -r requirements-dev.txt     # runtime packages + Hypothesis and the test HTTP client
-python -m pytest -q                     # 800+ tests, about 5-6 minutes, no network, no credentials, no orders
+python -m pytest -q                     # 1,200+ tests, about 10-12 minutes, no network, no credentials, no orders
 python scripts/ui_smoke_test.py         # runs every page headlessly
 python scripts/demo_preflight.py        # pre-demo environment checks
 ```

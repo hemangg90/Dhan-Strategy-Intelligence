@@ -39,6 +39,28 @@ for si in output.strategy_intel:
     )
 st.dataframe(rows, width="stretch", hide_index=True)
 
+# ------------------------------------------------------------------ the evidence behind the ranking
+import pandas as pd
+
+from quant_intelligence.ranking.ranking_report import strategy_report_rows, no_trade_explanation
+
+report = strategy_report_rows(output.strategy_intel, output.ranking, output.regime_label)
+if output.ranking.is_no_trade:
+    st.warning("**NO TRADE.** " + " ".join(no_trade_explanation(output.ranking, report)[:1]))
+    with st.expander("Why each strategy is not eligible"):
+        for line in no_trade_explanation(output.ranking, report)[1:]:
+            st.write("- " + line)
+else:
+    st.success(f"Selected: **{output.ranking.selected_strategy}**" + (" (tie-break: the top strategies are statistically tied)" if output.ranking.tie_break else ""))
+with st.expander("Evidence behind the ranking (net of costs; sample size and uncertainty shown)"):
+    st.caption("Strategies are not ranked by win rate. The rank score uses a lower bound of the shrunk conditional edge, then confidence, "
+               "probability of a positive result and a drawdown penalty (ranking/ranking_engine.py). Comparable observations are historical "
+               "trades in market conditions like today's. 'Options-specific' performance is unavailable: there are no historical option prices.")
+    table = pd.DataFrame([{k: v for k, v in r.items() if k not in ("score_components", "regime_record", "why_not_eligible", "options_specific", "regime", "selected")}
+                          | {"Selected": "yes" if r["selected"] else ""} for r in report])
+    st.dataframe(table, hide_index=True, width="stretch")
+    st.caption("Options-specific performance: " + report[0]["options_specific"] if report else "")
+
 st.divider()
 st.subheader("Drill-down")
 choice = st.selectbox("Select strategy", [s.strategy_name for s in output.strategy_intel])
@@ -54,6 +76,20 @@ with col2:
 
 st.markdown("**Ranking score components**")
 st.json(sel.score.components)
+
+if len(sel.analogues):
+    with st.expander("Which historical observations were chosen as comparable, and why"):
+        st.caption("Closest and furthest features are in scaled units (smaller = more alike). 'Outcome known at' is when the trade's result "
+                   "became available: an observation whose outcome was not yet known is never used.")
+        picked = sel.analogues
+        st.dataframe(pd.DataFrame(
+            {"Distance": picked.get("distance"), "Similarity": picked.get("similarity_score"), "Net R": picked.get("r_multiple"),
+             "Event (entry)": picked.get("entry_timestamp"), "Outcome known at": picked.get("outcome_available_at", picked.get("exit_timestamp"))}).round(3),
+            hide_index=True, width="stretch", height=260)
+        feats = picked.attrs.get("features_used")
+        if feats:
+            st.caption("Features compared: " + ", ".join(feats) + (f". Not compared (missing from the history or today): {', '.join(picked.attrs['features_unavailable'])}."
+                                                                   if picked.attrs.get("features_unavailable") else "."))
 
 st.markdown("**Historical observations backing this strategy's backtest**")
 trade_rows = [

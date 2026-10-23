@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from quant_intelligence.options.chain_analytics import ChainSnapshot, parse_option_chain
+from quant_intelligence.utils.timeutil import now_ist
 
 # Index underlyings: security_id/seg are Dhan's permanent instrument identifiers, static
 # here. strike_step/lot_size are last-known-good fallbacks only - NSE revises index lot
@@ -93,6 +94,7 @@ class OptionContract:
     premium: float
     delta: float | None
     iv: float | None
+    last_price: float | None = None  # last traded premium, when `premium` is an executable (bid/ask) price
 
 
 def resolve_expiry(available_expiries: list[str], preference: str = "NEAREST") -> str:
@@ -137,7 +139,30 @@ def _fetch_chain_uncached(client, underlying: str, expiry_preference: str) -> Ch
             break
     expiry = resolve_expiry(expiries, expiry_preference)
     raw = client.get_option_chain(security_id, info["seg"], expiry)
-    return parse_option_chain(underlying, expiry, raw)
+    snapshot = parse_option_chain(underlying, expiry, raw)
+    if isinstance(snapshot, ChainSnapshot):
+        snapshot.fetched_at = now_ist().replace(tzinfo=None)
+        snapshot.lot_size = info.get("lot_size")
+        snapshot.exchange_segment = option_segment_for(underlying)
+        _record_iv_history(snapshot, underlying)
+    return snapshot
+
+
+def _record_iv_history(snapshot: ChainSnapshot, underlying: str) -> None:
+    """Add this snapshot's ATM IV to the recorded history (options/iv_history.py). Best effort: never affects the fetch."""
+    try:
+        import datetime as dt
+
+        from quant_intelligence.config.expiry_rules import time_to_expiry_years
+        from quant_intelligence.config.settings import SETTINGS
+        from quant_intelligence.options.iv_history import record_iv
+        from quant_intelligence.utils.market_profile import profile_for
+
+        years = time_to_expiry_years(snapshot.fetched_at, dt.date.fromisoformat(snapshot.expiry[:10]), profile_for(underlying),
+                                     SETTINGS.trading_days_per_year)
+        record_iv(snapshot, snapshot.fetched_at, dte=years * SETTINGS.trading_days_per_year)
+    except Exception:
+        pass
 
 
 def select_contract(
@@ -209,12 +234,18 @@ def choose_contract(
     mode: str | None = None,
     max_outlay: float | None = None,
 ) -> OptionContract:
-    """The contract to trade, by OPTION_SELECTION: "OFFSET" (default) = `select_contract` (ATM +/- the offset);
-    "BEST" = the top-ranked eligible strike from `strike_ranker`. `max_outlay` (Rs, one lot's premium cost) only
-    applies to BEST. Callers pass `mode` only to override the setting."""
+    """The contract to trade, by OPTION_SELECTION: "OFFSET" = `select_contract` (ATM +/- the offset); "BEST" = the
+    top-ranked eligible strike from `strike_ranker`; "SCORED" = the chain-scored pick from `contract_scoring` (OI
+    build-up, liquidity, spread, delta, IV). `max_outlay` (Rs, one lot's premium cost) applies to BEST and SCORED.
+    Callers pass `mode` only to override the setting."""
     from quant_intelligence.config.settings import SETTINGS
 
-    if (mode or SETTINGS.option_selection) == "BEST":
+    chosen = mode or SETTINGS.option_selection
+    if chosen == "SCORED":
+        from quant_intelligence.options.contract_scoring import select_best_contract as select_scored
+
+        return select_scored(chain, direction, transaction, lot_size, max_outlay).contract
+    if chosen == "BEST":
         from quant_intelligence.options.strike_ranker import select_best_contract
 
         return select_best_contract(chain, direction, transaction, lot_size, max_outlay)

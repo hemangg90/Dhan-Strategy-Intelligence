@@ -124,6 +124,7 @@ def _funnel(decisions: list[dict]) -> dict:
         "rejected": by_status.get("REJECTED", 0),
         "tie_break": sum(1 for d in decisions if d["tie_break"] and d["status"] != "NO_TRADE"),
         "direction_filtered": sum(1 for d in decisions if d["reason_class"] == "DIRECTION_FILTER"),
+        "no_room": sum(1 for d in decisions if d["reason_class"] == "NO_ROOM"),
         "no_size": sum(1 for d in decisions if d["reason_class"] == "NO_SIZE"),
         "no_size_instruments": sorted({d.get("instrument") for d in decisions if d["reason_class"] == "NO_SIZE" and d.get("instrument")}),
         "no_trade_reasons": _count_table([d["reason_class"] for d in decisions if d["status"] == "NO_TRADE"], "reason"),
@@ -196,6 +197,9 @@ def _narrative(rep: dict) -> list[str]:
         if f.get("direction_filtered"):
             out.append(f"{f['direction_filtered']} setup(s) were skipped because they pointed against the heatmap mover's direction "
                        "(an up-mover only takes calls, a down-mover only puts).")
+        if f.get("no_room"):
+            out.append(f"{f['no_room']} setup(s) were skipped because a support/resistance or liquidity level sat too close "
+                       "in the trade's way (less than the required room to run).")
         if f["no_size"]:
             names = ", ".join(f["no_size_instruments"][:6])
             out.append(f"{f['no_size']} setup(s) were skipped because one lot's stop-loss exceeds the per-trade loss budget "
