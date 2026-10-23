@@ -94,13 +94,13 @@ class DhanApiClient:
             LIMITER.acquire(category)
 
     def _recover_token(self) -> bool:
-        """Ask the token keeper for a new token (renew/generate) and pick it up. Only for clients that follow the
+        """Ask the token keeper for a new token (renew) and pick it up. Only for clients that follow the
         live settings; the keeper rate-limits its own attempts, so calling this on every failure is safe."""
         if not self._follows_settings:
             return False
         from quant_intelligence.brokers.dhan_auth import TOKEN_KEEPER
 
-        if TOKEN_KEEPER.ensure_fresh() not in ("renewed", "generated"):
+        if TOKEN_KEEPER.ensure_fresh() not in ("renewed",):
             return False
         self.client_id, self.access_token = SETTINGS.dhan_client_id, SETTINGS.dhan_access_token
         return True
@@ -114,7 +114,7 @@ class DhanApiClient:
         if self._follows_settings:
             self.client_id, self.access_token = SETTINGS.dhan_client_id, SETTINGS.dhan_access_token
             if self.client_id and not self.access_token:
-                self._recover_token()  # PIN + TOTP set but no token yet: generate one
+                self._recover_token()  # no token yet: nothing to renew, the keeper reports it
         self._require_configured()
         limits = SETTINGS.dhan
         attempts = limits.max_attempts if retry else 1

@@ -1,4 +1,4 @@
-"""Token keeper: RFC 6238 codes, renew before expiry, generate when expired, backoff, no secrets in messages.
+"""Token keeper: renew before expiry, manual entry when expired, backoff, no secrets in messages.
 All network calls are mocked."""
 import base64
 import dataclasses
@@ -10,7 +10,7 @@ import pytest
 import requests
 
 from quant_intelligence.brokers import dhan_auth
-from quant_intelligence.brokers.dhan_auth import TokenKeeper, totp_now
+from quant_intelligence.brokers.dhan_auth import TokenKeeper
 from quant_intelligence.config import credentials as cred_module
 from quant_intelligence.config import settings as settings_module
 
@@ -41,11 +41,11 @@ def env(monkeypatch):
     """Keeper enabled, a client id set, credentials persisted nowhere (in-memory only)."""
     state = {"settings": None, "saved": []}
 
-    def configure(token_hours, pin="", secret=""):
+    def configure(token_hours):
         state["settings"] = dataclasses.replace(
             settings_module.SETTINGS, token_keeper_enabled=True, dhan_client_id="1000000001",
             dhan_access_token=make_token(token_hours) if token_hours is not None else "",
-            dhan_pin=pin, dhan_totp_secret=secret, token_renew_before_hours=8.0)
+            token_renew_before_hours=8.0)
         monkeypatch.setattr(dhan_auth, "SETTINGS", state["settings"])
 
     def fake_update(client_id, token):
@@ -56,21 +56,6 @@ def env(monkeypatch):
     monkeypatch.setattr(dhan_auth, "log_event", lambda *a, **k: None)
     state["configure"] = configure
     return state
-
-
-# ---------------------------------------------------------------- TOTP (RFC 6238 appendix B, SHA-1)
-def test_totp_matches_rfc_6238_vectors():
-    secret = base64.b32encode(b"12345678901234567890").decode()
-    assert totp_now(secret, 59, digits=8) == "94287082"
-    assert totp_now(secret, 1111111109, digits=8) == "07081804"
-    assert totp_now(secret, 2000000000, digits=8) == "69279037"
-    assert len(totp_now(secret)) == 6
-
-
-def test_totp_accepts_spaced_lowercase_secrets():
-    secret = base64.b32encode(b"12345678901234567890").decode().lower()
-    spaced = " ".join(secret[i:i + 4] for i in range(0, len(secret), 4))
-    assert totp_now(spaced, 59, digits=8) == "94287082"
 
 
 # ---------------------------------------------------------------- renew
@@ -119,61 +104,12 @@ def test_network_errors_are_reported_without_leaking_urls(env, monkeypatch):
     assert "SECRET" not in keeper.last_error and "ConnectionError" in keeper.last_error
 
 
-# ---------------------------------------------------------------- generate
-def test_an_expired_token_without_totp_asks_for_manual_entry(env, monkeypatch):
+# ---------------------------------------------------------------- expired
+def test_an_expired_token_asks_for_manual_entry(env, monkeypatch):
     env["configure"](-3)
     monkeypatch.setattr(dhan_auth.requests, "get", lambda *a, **k: pytest.fail("an expired token cannot be renewed"))
-    monkeypatch.setattr(dhan_auth.requests, "post", lambda *a, **k: pytest.fail("no TOTP configured"))
     keeper = TokenKeeper()
     assert keeper.ensure_fresh() == "manual" and "enter a new token" in keeper.last_error
-
-
-def test_an_expired_token_is_regenerated_with_pin_and_totp(env, monkeypatch):
-    secret = base64.b32encode(b"12345678901234567890").decode()
-    env["configure"](-3, pin="123456", secret=secret)
-    new = make_token(24)
-    seen = {}
-
-    def fake_post(url, params=None, timeout=None):
-        seen.update(url=url, params=params)
-        return Resp(200, {"accessToken": new})
-
-    monkeypatch.setattr(dhan_auth.requests, "get", lambda *a, **k: pytest.fail("expired: do not try renew"))
-    monkeypatch.setattr(dhan_auth.requests, "post", fake_post)
-    keeper = TokenKeeper()
-    assert keeper.ensure_fresh() == "generated"
-    assert seen["url"] == dhan_auth.GENERATE_URL
-    assert seen["params"]["dhanClientId"] == "1000000001" and seen["params"]["pin"] == "123456"
-    assert len(seen["params"]["totp"]) == 6 and env["saved"] == [new]
-
-
-def test_renew_failure_falls_back_to_generate(env, monkeypatch):
-    secret = base64.b32encode(b"12345678901234567890").decode()
-    env["configure"](2, pin="123456", secret=secret)
-    new = make_token(24)
-    monkeypatch.setattr(dhan_auth.requests, "get", lambda *a, **k: Resp(500, None))
-    monkeypatch.setattr(dhan_auth.requests, "post", lambda *a, **k: Resp(200, {"data": {"accessToken": new}}))
-    assert TokenKeeper().ensure_fresh() == "generated" and env["saved"] == [new]
-
-
-def test_wrong_pin_never_leaks_into_the_error_and_backs_off(env, monkeypatch):
-    secret = base64.b32encode(b"12345678901234567890").decode()
-    env["configure"](-1, pin="987654", secret=secret)
-
-    def boom(url, params=None, timeout=None):
-        raise requests.ConnectionError(f"failed for {url}?pin={params['pin']}&totp={params['totp']}")
-
-    monkeypatch.setattr(dhan_auth.requests, "post", boom)
-    keeper = TokenKeeper()
-    assert keeper.ensure_fresh() == "failed"
-    assert "987654" not in keeper.last_error and "totp" not in keeper.last_error
-    assert keeper.ensure_fresh() == "waiting"
-
-
-def test_a_bad_totp_secret_is_reported_not_raised(env):
-    env["configure"](-1, pin="123456", secret="not base32 !!")
-    keeper = TokenKeeper()
-    assert keeper.ensure_fresh() == "failed" and "not a valid base32" in keeper.last_error
 
 
 # ---------------------------------------------------------------- guards
@@ -245,10 +181,7 @@ def test_client_with_explicit_credentials_never_triggers_the_keeper(monkeypatch)
         client.get_fund_limit()
 
 
-# ---------------------------------------------------------------- rejected tokens and refused PIN/TOTP
-SECRET = base64.b32encode(b"12345678901234567890").decode()
-
-
+# ---------------------------------------------------------------- rejected tokens
 @pytest.fixture
 def reject(monkeypatch):
     """Mark a token as rejected by Dhan (401) the way the API client does."""
@@ -258,53 +191,20 @@ def reject(monkeypatch):
     return dhan_rate_limit.LIMITER.record_auth_failure
 
 
-def test_a_rejected_but_unexpired_token_is_regenerated_not_renewed(env, monkeypatch, reject):
-    env["configure"](20, pin="123456", secret=SECRET)
-    reject(env["settings"].dhan_access_token)
-    new = make_token(24)
-    monkeypatch.setattr(dhan_auth.requests, "get", lambda *a, **k: pytest.fail("a rejected token cannot be renewed"))
-    monkeypatch.setattr(dhan_auth.requests, "post", lambda *a, **k: Resp(200, {"accessToken": new}))
-    assert TokenKeeper().ensure_fresh() == "generated" and env["saved"] == [new]
-
-
-def test_a_rejected_token_without_totp_asks_for_manual_entry(env, monkeypatch, reject):
+def test_a_rejected_but_unexpired_token_asks_for_manual_entry(env, monkeypatch, reject):
     env["configure"](20)
     reject(env["settings"].dhan_access_token)
-    monkeypatch.setattr(dhan_auth.requests, "get", lambda *a, **k: pytest.fail("no network"))
+    monkeypatch.setattr(dhan_auth.requests, "get", lambda *a, **k: pytest.fail("a rejected token cannot be renewed"))
     keeper = TokenKeeper()
     assert keeper.ensure_fresh() == "manual" and "rejected" in keeper.last_error
 
 
-def test_a_refused_pin_is_not_retried_until_it_changes(env, monkeypatch):
-    env["configure"](-1, pin="111111", secret=SECRET)
-    calls = []
-    monkeypatch.setattr(dhan_auth.requests, "post", lambda *a, **k: calls.append(1) or Resp(401, {"errorCode": "DH-901"}))
-    keeper = TokenKeeper()
-    assert keeper.ensure_fresh() == "failed" and "paused until the PIN" in keeper.last_error
-    keeper._next_attempt = 0.0  # even once the backoff is over...
-    assert keeper.ensure_fresh() == "manual" and len(calls) == 1 and keeper.status()["totp_refused"]
-
-    object.__setattr__(env["settings"], "dhan_pin", "222222")  # ...until the PIN is corrected
-    new = make_token(24)
-    monkeypatch.setattr(dhan_auth.requests, "post", lambda *a, **k: Resp(200, {"accessToken": new}))
-    assert keeper.ensure_fresh() == "generated" and env["saved"] == [new]
-
-
 def test_server_errors_are_retried_after_a_minute_not_ten(env, monkeypatch):
-    env["configure"](-1, pin="123456", secret=SECRET)
-    monkeypatch.setattr(dhan_auth.requests, "post", lambda *a, **k: Resp(503, None))
+    env["configure"](5)
+    monkeypatch.setattr(dhan_auth.requests, "get", lambda *a, **k: Resp(503, None))
     keeper = TokenKeeper()
     assert keeper.ensure_fresh() == "failed"
-    assert 0 < keeper.status()["retry_in"] <= dhan_auth.RETRY_AFTER_TRANSIENT_SEC and not keeper.status()["totp_refused"]
-
-
-def test_a_code_about_to_roll_over_waits_for_the_next_one(env, monkeypatch):
-    env["configure"](-1, pin="123456", secret=SECRET)
-    slept = []
-    monkeypatch.setattr(dhan_auth.time, "time", lambda: 30 * 56_666_667 - 1.0)  # 1 s left in the 30 s step
-    monkeypatch.setattr(dhan_auth.time, "sleep", slept.append)
-    monkeypatch.setattr(dhan_auth.requests, "post", lambda *a, **k: Resp(200, {"accessToken": make_token(24)}))
-    assert TokenKeeper().ensure_fresh() == "generated" and slept and slept[0] > 1.0
+    assert 0 < keeper.status()["retry_in"] <= dhan_auth.RETRY_AFTER_TRANSIENT_SEC
 
 
 # ---------------------------------------------------------------- the API client recovers from 401 / missing token
@@ -334,7 +234,7 @@ def client_env(monkeypatch):
         def ensure_fresh(self):
             FakeKeeper.calls += 1
             object.__setattr__(live, "dhan_access_token", fresh)
-            return "generated"
+            return "renewed"
 
     monkeypatch.setattr(dhan_auth, "TOKEN_KEEPER", FakeKeeper())
     return client_module, live, fresh, FakeKeeper
@@ -374,7 +274,7 @@ def test_client_never_resends_an_order_after_a_401(client_env, monkeypatch):
     assert len(sent) == 1 and keeper.calls == 1  # the token is still replaced, so the NEXT order works
 
 
-def test_client_generates_a_token_when_none_is_set(client_env, monkeypatch):
+def test_client_picks_up_a_token_when_none_is_set(client_env, monkeypatch):
     client_module, live, fresh, keeper = client_env
     object.__setattr__(live, "dhan_access_token", "")
     sent = {}

@@ -232,13 +232,10 @@ class Settings:
     dividend_yield: float = _float_env("DIVIDEND_YIELD", 0.012)  # index/stock carry; MCX uses q = r
     trading_days_per_year: int = _int_env("TRADING_DAYS_PER_YEAR", 252)
 
-    # Token keeper (brokers/dhan_auth.py): renews the 24h Dhan token before it expires. Renewing needs nothing
-    # extra; DHAN_PIN + DHAN_TOTP_SECRET (treat like passwords: Secrets/.env only, never git) let it also
-    # generate a brand-new token when the old one has already expired.
+    # Token keeper (brokers/dhan_auth.py): renews the 24h Dhan token before it expires. An expired token has to be
+    # entered by hand.
     token_keeper_enabled: bool = _bool_env("TOKEN_KEEPER", True)
     token_renew_before_hours: float = _float_env("TOKEN_RENEW_BEFORE_HOURS", 8.0)
-    dhan_pin: str = os.getenv("DHAN_PIN", "").strip()
-    dhan_totp_secret: str = os.getenv("DHAN_TOTP_SECRET", "").strip()
 
     # Automation
     auto_trade_refresh_seconds: int = _int_env("AUTO_TRADE_REFRESH_SECONDS", 60)

@@ -252,22 +252,15 @@ beats plain ATM: compare on paper before relying on it. Leave `OPTION_SELECTION`
 Dhan access tokens last 24 hours. The **token keeper** (`brokers/dhan_auth.py`) checks the token's own expiry
 (no network) and:
 
-1. **Renews** it with Dhan's `RenewToken` when under `TOKEN_RENEW_BEFORE_HOURS` (8) remain - needs no extra setup,
-   but only works while the token is still active.
-2. If `DHAN_PIN` and `DHAN_TOTP_SECRET` are set, **generates** a new token from a time-based one-time code (RFC 6238,
-   standard library) - this also recovers from a token that has already expired, from one Dhan rejects before its
-   expiry (401 / DH-901: revoked, or replaced by a token made elsewhere), and from no token at all. The API client asks
-   the keeper for a new token when it meets any of these, then sends a read once more (orders are never re-sent).
+**Renews** it with Dhan's `RenewToken` when under `TOKEN_RENEW_BEFORE_HOURS` (8) remain; this only works while the
+token is still active. A token that has expired, been rejected before expiry (401 / DH-901) or is missing must be
+entered by hand under *API Keys*; the API client then picks it up and sends a read once more (orders are never re-sent).
 
 It makes at most one attempt at a time, waits 1 minute after a network/server error and 10 minutes after any other
-failure, and does not retry a PIN/TOTP Dhan refused until it is changed (a wrong PIN must not lock the account); it
-also waits for a fresh code when the current one is about to roll over. It
-never puts the PIN/TOTP in logs or error messages, and applies the new token to the running app (and `.env` when
-writable). The status shows in *API Keys*, where the PIN and TOTP secret can also be entered (*Automatic token
-(PIN + TOTP)*; saved to `.env` and, if no valid token is set, used at once to generate one). **Treat `DHAN_PIN` and `DHAN_TOTP_SECRET` like passwords:** put them in
-Streamlit Secrets or `.env`, never in git or chat; they let anyone who has them mint tokens for your account. On
-Streamlit Cloud the sidebar only changes the running app (lost on reboot) - put lasting values in the app's Secrets.
-Disable with `TOKEN_KEEPER=false`. The renew/generate calls follow Dhan's documented endpoints but could only be
+failure, never puts the token in logs or error messages, and applies the new token to the running app (and `.env` when
+writable). The status shows in *API Keys*. On Streamlit Cloud the sidebar only changes the running app (lost on
+reboot) - put lasting values in the app's Secrets.
+Disable with `TOKEN_KEEPER=false`. The renew call follows Dhan's documented endpoints but could only be
 tested against mocked responses, not a live account - confirm the first renewal in the log (`token_keeper`).
 - `data_adapters/synthetic.py` still exists but is **used only by the test-suite**, never at runtime.
 
@@ -567,7 +560,6 @@ SQLite even with no `.env`.
 | `TIE_BREAK_PAPER`, `TIE_BREAK_LIVE`, `TIE_BREAK_SIZE_FACTOR` | `true`, `false`, `0.5` | Trade the top strategy (tagged TIE-BREAK, sized x factor) when the best two are statistically tied. |
 | `DATA_KEEPER`, `DATA_KEEPER_INTERVAL_SEC` | `true`, `60` | Background candle refresh for every watchlist instrument. |
 | `TOKEN_KEEPER`, `TOKEN_RENEW_BEFORE_HOURS` | `true`, `8` | Auto-renew the Dhan token when this many hours remain. |
-| `DHAN_PIN`, `DHAN_TOTP_SECRET` | *(unset)* | Optional. With both set the token keeper can generate a new token even after expiry. **Secrets: never commit or paste them.** |
 | `DATABASE_URL` | local SQLite | Use a hosted Postgres to keep history across reboots (see *Database*). |
 | `EOD_REPORT`, `EOD_FORCE_SQUARE_OFF` | `true`, `true` | Build the daily report after each close; close paper positions still open then. |
 | `LOG_RETENTION_DAYS`, `DECISION_RETENTION_DAYS` | `30`, `90` | How long log / scan-decision rows are kept (trades and reports are kept forever). |
@@ -628,7 +620,7 @@ quant_intelligence/
                  position_monitor | square_off | capital
   risk/          risk_engine.py
   brokers/       base_broker | paper_broker | dhan_broker (live) | dhan_api_client (REST)
-                 dhan_rate_limit (account-wide limiter, 429 breaker) | dhan_cache (shared price/chain caches) | dhan_auth (token renew/TOTP)
+                 dhan_rate_limit (account-wide limiter, 429 breaker) | dhan_cache (shared price/chain caches) | dhan_auth (token renew)
   database/      db.py | models.py
   reports/       report_generator.py
   ui/            state | theme | components (status bar, KPI tiles, position cards) | charts (Plotly) | tables

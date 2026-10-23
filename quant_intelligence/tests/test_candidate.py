@@ -164,7 +164,7 @@ def test_settings_rows_show_limits_and_never_a_credential():
 
     rows = sv.mode_rows() + sv.risk_rows() + sv.housekeeping_rows()
     text = " ".join(str(v) for r in rows for v in r.values())
-    for secret in (SETTINGS.dhan_access_token, SETTINGS.dhan_client_id, SETTINGS.dhan_pin, SETTINGS.dhan_totp_secret):
+    for secret in (SETTINGS.dhan_access_token, SETTINGS.dhan_client_id):
         assert not secret or secret not in text  # whatever credentials are configured never appear
     labels = " ".join(str(r.get("Setting", r.get("Limit", ""))).lower() for r in rows)
     assert not any(word in labels for word in ("token", "secret", "password", "pin", "api key", "client id"))
